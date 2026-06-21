@@ -161,6 +161,10 @@ with tab_new:
         tag_str = " ".join("#" + str(t).lstrip("#") for t in tags)
         hashtags = st.text_input("해시태그 (글 맨 끝에 자동 삽입)", value=tag_str, key="edit_tags")
 
+        auto = st.checkbox(
+            "🚀 저장 후 맥에서 네이버 자동 임시저장 (맥 워커가 켜져 있을 때)", value=False,
+            help="체크하면 맥이 켜져 있을 때 자동으로 네이버에 임시저장합니다(발행은 직접).",
+        )
         if st.button("💾 저장 (목록에 추가)", type="primary", use_container_width=True):
             if not store.enabled():
                 st.error("Supabase 가 설정되지 않아 저장할 수 없습니다.")
@@ -181,8 +185,11 @@ with tab_new:
                     with st.spinner("저장 중…"):
                         store.save_draft(title=title, body=final_body, data=data,
                                          images=d["images"], thumbnail=d.get("thumb"),
-                                         status="ready")
-                    st.success("저장 완료! '내 목록'에서 확인 / 맥에서 임시저장하세요.")
+                                         status=("queued" if auto else "ready"))
+                    if auto:
+                        st.success("저장 + 맥 자동 임시저장 요청 완료! 맥이 켜져 있으면 곧 처리됩니다.")
+                    else:
+                        st.success("저장 완료! '내 목록'에서 확인 / 맥에서 임시저장하세요.")
                     del st.session_state["draft"]
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
@@ -199,17 +206,26 @@ with tab_list:
         except Exception as e:
             drafts = []
             st.error(f"목록 불러오기 실패: {e}")
-        badge = {"ready": "🟢 대기", "posted": "✅ 발행됨", "draft": "📝 작성중"}
+        badge = {"ready": "🟢 대기", "queued": "⏳ 맥 처리대기", "posting": "🔄 처리중",
+                 "posted": "✅ 발행됨", "error": "⚠️ 실패", "draft": "📝 작성중"}
         for row in drafts:
-            with st.expander(f"{badge.get(row.get('status'),'')} · {row.get('title','(제목없음)')}"):
+            status = row.get("status")
+            with st.expander(f"{badge.get(status,'')} · {row.get('title','(제목없음)')}"):
+                if status == "error":
+                    st.error("자동 저장 실패: " + str((row.get("data") or {}).get("error", "")))
                 nt = st.text_input("제목", value=row.get("title", ""), key=f"t_{row['id']}")
                 nb = st.text_area("본문", value=row.get("body", ""), height=240, key=f"b_{row['id']}")
-                bc1, bc2 = st.columns(2)
+                bc1, bc2, bc3 = st.columns(3)
                 with bc1:
                     if st.button("수정 저장", key=f"s_{row['id']}"):
                         store.update_draft(row["id"], {"title": nt, "body": nb})
                         st.success("수정됨")
                 with bc2:
+                    if status in ("ready", "error", "posted") and st.button("🚀 맥 자동저장", key=f"q_{row['id']}"):
+                        store.update_draft(row["id"], {"title": nt, "body": nb, "status": "queued"})
+                        st.success("맥에 자동저장 요청함")
+                        st.rerun()
+                with bc3:
                     if st.button("삭제", key=f"d_{row['id']}"):
                         store.delete_draft(row["id"])
                         st.rerun()

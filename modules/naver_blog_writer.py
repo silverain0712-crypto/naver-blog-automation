@@ -531,23 +531,28 @@ def _wait_closed(ctx, log):
         pass
 
 
-def _launch_browser(p, log):
+def _launch_browser(p, log, headless=False):
     """실제 구글 크롬으로 띄운다. NAVER_CHROME_PROFILE 설정 시 내 크롬 프로필 사용."""
-    common = dict(headless=False, viewport={"width": 1440, "height": 960})
+    common = dict(headless=headless, viewport={"width": 1440, "height": 960})
     use_my_profile = bool(config.NAVER_CHROME_PROFILE)
     profile = config.NAVER_CHROME_PROFILE if use_my_profile else str(USERDATA_DIR)
     if use_my_profile:
         log("내 크롬 프로필 사용 — 크롬이 켜져 있으면 실패합니다(완전 종료 후 재시도).")
     try:
         ctx = p.chromium.launch_persistent_context(profile, channel="chrome", **common)
-        log("구글 크롬으로 실행합니다.")
+        log("구글 크롬으로 실행합니다." if not headless else "구글 크롬(백그라운드)으로 실행합니다.")
         return ctx
     except Exception as e:
         log(f"구글 크롬 실행 실패({e}). 기본 브라우저(Chromium)로 대체합니다.")
         return p.chromium.launch_persistent_context(str(USERDATA_DIR), **common)
 
 
-def run_job(job_dir: str):
+def run_job(job_dir: str, interactive: bool = True):
+    """draft.json 을 읽어 네이버에 임시저장.
+
+    interactive=True: 화면 있는 크롬 + 미로그인 시 사용자가 직접 로그인 대기(수동/mac_poster).
+    interactive=False: headless 백그라운드 자동(워커). 미로그인이면 예외를 던진다(재로그인 필요).
+    """
     job_dir = Path(job_dir)
     job = json.loads((job_dir / "draft.json").read_text(encoding="utf-8"))
     log = _logger(job_dir)
@@ -558,14 +563,14 @@ def run_job(job_dir: str):
     image_paths = [job_dir / fn for fn in job.get("images", [])]
     image_paths = [p for p in image_paths if p.exists()]
 
-    # 안전망: 전체 본문을 클립보드에 복사(자동입력 실패 시 Cmd+V)
-    _pbcopy(f"{title}\n\n{body}")
-    log("본문을 클립보드에 복사해뒀어요(자동입력 실패 시 붙여넣기용).")
+    if interactive:
+        _pbcopy(f"{title}\n\n{body}")
+        log("본문을 클립보드에 복사해뒀어요(자동입력 실패 시 붙여넣기용).")
 
     USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        ctx = _launch_browser(p, log)
+        ctx = _launch_browser(p, log, headless=not interactive)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
         url = WRITE_URL.format(blog_id=blog_id)
@@ -575,11 +580,19 @@ def run_job(job_dir: str):
         except Exception as e:
             log(f"페이지 이동 경고: {e}")
 
-        if not _wait_logged_in(page, log):
-            _wait_closed(ctx, log)
-            return
+        if interactive:
+            if not _wait_logged_in(page, log):
+                _wait_closed(ctx, log)
+                return
+        else:
+            # 자동 모드: 로그인 안 돼 있으면 중단(2단계 인증을 자동으론 못 함)
+            time.sleep(2)
+            if "nid.naver.com" in page.url:
+                ctx.close()
+                raise RuntimeError(
+                    "네이버 세션이 만료됐습니다. 맥에서 mac_poster.py 로 1회 로그인한 뒤 다시 시도하세요."
+                )
 
-        # 로그인 후 글쓰기 페이지 보장
         if "Redirect=Write" not in page.url:
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -603,11 +616,18 @@ def run_job(job_dir: str):
         )
         _shot(page, job_dir, "02_text_and_photos")
 
-        _save_draft(frame, log)
+        saved = _save_draft(frame, log)
         _shot(page, job_dir, "04_after_save")
 
         if job.get("videos"):
             log("영상은 자동 업로드하지 않았어요. 본문 [영상N] 위치에 직접 올려주세요.")
 
-        log("작업 완료. 발행은 직접 검수 후 눌러주세요. (이 프로그램은 발행하지 않습니다)")
-        _wait_closed(ctx, log)
+        if interactive:
+            log("작업 완료. 발행은 직접 검수 후 눌러주세요. (이 프로그램은 발행하지 않습니다)")
+            _wait_closed(ctx, log)
+        else:
+            time.sleep(2)
+            ctx.close()
+            if not saved:
+                raise RuntimeError("임시저장 버튼을 찾지 못했습니다(에디터 구조 변경 가능).")
+            log("자동 임시저장 완료.")
