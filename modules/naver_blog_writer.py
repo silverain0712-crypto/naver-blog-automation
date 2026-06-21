@@ -20,6 +20,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+import config
+
 USERDATA_DIR = Path.home() / ".naver_blog_automation" / "userdata"
 FORBIDDEN = ("발행",)  # 절대 클릭 금지 텍스트
 
@@ -529,6 +531,22 @@ def _wait_closed(ctx, log):
         pass
 
 
+def _launch_browser(p, log):
+    """실제 구글 크롬으로 띄운다. NAVER_CHROME_PROFILE 설정 시 내 크롬 프로필 사용."""
+    common = dict(headless=False, viewport={"width": 1440, "height": 960})
+    use_my_profile = bool(config.NAVER_CHROME_PROFILE)
+    profile = config.NAVER_CHROME_PROFILE if use_my_profile else str(USERDATA_DIR)
+    if use_my_profile:
+        log("내 크롬 프로필 사용 — 크롬이 켜져 있으면 실패합니다(완전 종료 후 재시도).")
+    try:
+        ctx = p.chromium.launch_persistent_context(profile, channel="chrome", **common)
+        log("구글 크롬으로 실행합니다.")
+        return ctx
+    except Exception as e:
+        log(f"구글 크롬 실행 실패({e}). 기본 브라우저(Chromium)로 대체합니다.")
+        return p.chromium.launch_persistent_context(str(USERDATA_DIR), **common)
+
+
 def run_job(job_dir: str):
     job_dir = Path(job_dir)
     job = json.loads((job_dir / "draft.json").read_text(encoding="utf-8"))
@@ -547,11 +565,7 @@ def run_job(job_dir: str):
     USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(USERDATA_DIR),
-            headless=False,
-            viewport={"width": 1440, "height": 960},
-        )
+        ctx = _launch_browser(p, log)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
         url = WRITE_URL.format(blog_id=blog_id)

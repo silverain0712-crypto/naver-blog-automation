@@ -370,8 +370,8 @@ if result:
         )
     with fc2:
         body_size = st.selectbox(
-            "본문 글자 크기", [15, 16, 19, 24], index=1,
-            help="비비 글은 보통 16~19. 기존 글과 맞을 때까지 조정하세요.",
+            "본문 글자 크기", [15, 16, 19, 24], index=0,
+            help="기존 글과 맞을 때까지 조정하세요.",
         )
 
     if st.button("🌐 브라우저 열어 임시저장하기", type="primary"):

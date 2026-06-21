@@ -18,6 +18,11 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "media").strip()
 
+# 네이버 자동화용 브라우저: 실제 구글 크롬 사용(기본). 내 크롬 프로필(확장앱·로그인)을
+# 쓰려면 NAVER_CHROME_PROFILE 에 프로필 폴더 경로를 넣는다(단, 실행 전 크롬 완전 종료 필요).
+#   예: ~/Library/Application Support/Google/Chrome
+NAVER_CHROME_PROFILE = os.path.expanduser(os.getenv("NAVER_CHROME_PROFILE", "").strip())
+
 # --- 모델 ID --------------------------------------------------------------
 # 사진 분석: 장수가 많아 비용 효율적인 Sonnet, 글 작성: 문체 품질이 중요해 Opus.
 VISION_MODEL = "claude-sonnet-4-6"

@@ -100,7 +100,7 @@ with tab_new:
     with cc1:
         body_font = st.selectbox("본문 폰트", ["나눔스퀘어", "나눔명조", "나눔고딕"], 0)
     with cc2:
-        body_size = st.selectbox("본문 크기", [15, 16, 19, 24], 1)
+        body_size = st.selectbox("본문 크기", [15, 16, 19, 24], 0)
 
     if st.button("✨ 초안 생성", type="primary", use_container_width=True):
         if not config.ANTHROPIC_API_KEY:
@@ -149,11 +149,17 @@ with tab_new:
         st.subheader("✏️ 수정 후 저장")
         if d.get("thumb"):
             st.image(d["thumb"], caption="썸네일", width=240)
-        titles = post.get("title_candidates", [""])
-        title = st.text_input("제목", value=titles[0], key="edit_title")
+        titles = post.get("title_candidates") or [""]
+        st.markdown("**제목 후보 (SEO 최적화) — 하나 고른 뒤 아래에서 수정**")
+        chosen = st.radio("제목 후보", titles, key="title_pick", label_visibility="collapsed")
+        title = st.text_input("제목 (수정 가능)", value=chosen,
+                              key=f"edit_title_{titles.index(chosen)}")
         body = st.text_area("본문", value=post.get("body", ""), height=360, key="edit_body")
         if post.get("suggested_keywords"):
             st.caption("추천 키워드: " + ", ".join(post["suggested_keywords"]))
+        tags = post.get("hashtags", [])
+        tag_str = " ".join("#" + str(t).lstrip("#") for t in tags)
+        hashtags = st.text_input("해시태그 (글 맨 끝에 자동 삽입)", value=tag_str, key="edit_tags")
 
         if st.button("💾 저장 (목록에 추가)", type="primary", use_container_width=True):
             if not store.enabled():
@@ -168,9 +174,12 @@ with tab_new:
                     "suggested_keywords": post.get("suggested_keywords", []),
                     "confirm_needed": post.get("confirm_needed", []),
                 }
+                final_body = body.rstrip()
+                if hashtags.strip():
+                    final_body += "\n\n" + hashtags.strip()
                 try:
                     with st.spinner("저장 중…"):
-                        store.save_draft(title=title, body=body, data=data,
+                        store.save_draft(title=title, body=final_body, data=data,
                                          images=d["images"], thumbnail=d.get("thumb"),
                                          status="ready")
                     st.success("저장 완료! '내 목록'에서 확인 / 맥에서 임시저장하세요.")
