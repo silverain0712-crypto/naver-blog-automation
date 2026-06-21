@@ -8,3 +8,4 @@ style_samples/_profile.json
 .DS_Store
 .venv/
 venv/
+streamlit_secrets.toml
