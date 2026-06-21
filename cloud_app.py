@@ -55,8 +55,14 @@ st.title("📝 비비 글감·초안")
 # --- 사이드바: 상태 + 학습 ---
 with st.sidebar:
     st.header("⚙️ 상태")
-    st.success("Claude 키 OK") if config.ANTHROPIC_API_KEY else st.error("ANTHROPIC_API_KEY 없음")
-    st.success("저장소 연결 OK") if store.enabled() else st.error("Supabase 미설정")
+    if config.ANTHROPIC_API_KEY:
+        st.success("Claude 키 OK")
+    else:
+        st.error("ANTHROPIC_API_KEY 없음")
+    if store.enabled():
+        st.success("저장소 연결 OK")
+    else:
+        st.error("Supabase 미설정")
     st.divider()
     st.caption("📚 발행 글 학습")
     sid = st.text_input("블로그 아이디", value="bbnation", key="sync_id")
