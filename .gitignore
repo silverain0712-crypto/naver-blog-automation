@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+output/
+naver_userdata/
+.naver_blog_automation/
+style_samples/_profile.json
+.DS_Store
+.venv/
+venv/
