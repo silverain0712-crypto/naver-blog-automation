@@ -532,18 +532,23 @@ def _wait_closed(ctx, log):
 
 
 def _launch_browser(p, log, headless=False):
-    """실제 구글 크롬으로 띄운다. NAVER_CHROME_PROFILE 설정 시 내 크롬 프로필 사용."""
+    """브라우저를 띄운다.
+
+    headless(워커): 충돌 없는 번들 크로미움(창 없음, 안정적).
+    headful(수동 mac_poster): 실제 구글 크롬 시도 → 실패 시 번들 크로미움.
+    """
     common = dict(headless=headless, viewport={"width": 1440, "height": 960})
-    use_my_profile = bool(config.NAVER_CHROME_PROFILE)
-    profile = config.NAVER_CHROME_PROFILE if use_my_profile else str(USERDATA_DIR)
-    if use_my_profile:
-        log("내 크롬 프로필 사용 — 크롬이 켜져 있으면 실패합니다(완전 종료 후 재시도).")
+    if headless:
+        return p.chromium.launch_persistent_context(str(USERDATA_DIR), **common)
+    profile = config.NAVER_CHROME_PROFILE or str(USERDATA_DIR)
+    if config.NAVER_CHROME_PROFILE:
+        log("내 크롬 프로필 사용 — 크롬 완전 종료 후 실행하세요.")
     try:
         ctx = p.chromium.launch_persistent_context(profile, channel="chrome", **common)
-        log("구글 크롬으로 실행합니다." if not headless else "구글 크롬(백그라운드)으로 실행합니다.")
+        log("구글 크롬으로 실행합니다.")
         return ctx
     except Exception as e:
-        log(f"구글 크롬 실행 실패({e}). 기본 브라우저(Chromium)로 대체합니다.")
+        log(f"구글 크롬 실행 실패({e}). 기본 브라우저로 대체합니다.")
         return p.chromium.launch_persistent_context(str(USERDATA_DIR), **common)
 
 
