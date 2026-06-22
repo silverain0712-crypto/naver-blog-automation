@@ -91,56 +91,79 @@ with tab_new:
     with cc2:
         body_size = st.selectbox("본문 크기", [15, 16, 19, 24], 0)
 
-    if st.button("✨ 초안 생성", type="primary", use_container_width=True):
+    _rewrite = st.session_state.pop("_do_rewrite", False)
+    if st.button("✨ 초안 생성", type="primary", use_container_width=True) or _rewrite:
         if not config.ANTHROPIC_API_KEY:
             st.error("ANTHROPIC_API_KEY 가 없습니다.")
-        elif not uploaded:
-            st.error("사진을 한 장 이상 올려주세요.")
         else:
-            # 무거운 모듈(anthropic/PIL)은 여기서만 로드 → 첫 화면 로딩 가볍게.
-            from modules import (
-                image_analyzer, layout_planner, post_generator,
-                style_profiler, thumbnail_maker,
-            )
-            images = [f.getvalue() for f in uploaded]
-            structure_key = config.POST_TYPES[post_type_label]
-            req_links = [l.strip() for l in required_links_raw.splitlines() if l.strip()]
-            try:
-                with st.status("작업 중...", expanded=True) as s:
-                    st.write("문체 로드…")
-                    guide = style_profiler.load_style_guide()
-                    st.write("사진 분석…")
-                    analysis = image_analyzer.analyze_images(images, structure_key, "감성 중심")
-                    st.write("초안 작성…")
-                    post = post_generator.generate_post(
-                        structure_key=structure_key, keyword=keyword,
-                        product_link=product_link, required_links=req_links,
-                        sponsor_type=sponsor, memo=memo, length=1500,
-                        photo_style="감성 중심", optional_fields={},
-                        style_guide=guide, image_analysis=analysis,
-                    )
-                    layout = layout_planner.plan_layout(post, analysis)
-                    st.write("썸네일…")
-                    rep = next((p["index"] for p in analysis.get("photos", [])
-                                if p.get("role") == "대표 이미지" and p.get("keep", True)), 1)
-                    rep_b = images[rep - 1] if 1 <= rep <= len(images) else images[0]
-                    thumb, _ = thumbnail_maker.generate_thumbnail(
-                        rep_b, post.get("thumbnail_title") or [keyword or "REVIEW"])
-                    s.update(label="완료", state="complete", expanded=False)
-                st.session_state["draft"] = {
-                    "post": post, "layout": layout, "images": images,
-                    "thumb": thumb, "blog_id": blog_id, "font": body_font,
-                    "size": int(body_size),
-                }
-            except Exception as e:
-                st.error(f"오류: {e}")
+            _p = st.session_state.get("draft_params") if _rewrite else None
+            images = _p["images"] if _p else ([f.getvalue() for f in uploaded] if uploaded else [])
+            if not images:
+                st.error("사진을 한 장 이상 올려주세요.")
+            else:
+                _structure_key = (_p["structure_key"] if _p else config.POST_TYPES[post_type_label])
+                _keyword      = (_p["keyword"]       if _p else keyword)
+                _product_link = (_p["product_link"]  if _p else product_link)
+                _req_links    = (_p["req_links"]      if _p else [l.strip() for l in required_links_raw.splitlines() if l.strip()])
+                _sponsor      = (_p["sponsor"]        if _p else sponsor)
+                _memo         = (_p["memo"]           if _p else memo)
+                _blog_id      = (_p["blog_id"]        if _p else blog_id)
+                _font         = (_p["body_font"]      if _p else body_font)
+                _size         = (_p["body_size"]      if _p else int(body_size))
+                # 파라미터 저장 (다시 쓰기용)
+                st.session_state["draft_params"] = dict(
+                    images=images, structure_key=_structure_key, keyword=_keyword,
+                    product_link=_product_link, req_links=_req_links, sponsor=_sponsor,
+                    memo=_memo, blog_id=_blog_id, body_font=_font, body_size=_size,
+                )
+                # 무거운 모듈(anthropic/PIL)은 여기서만 로드 → 첫 화면 로딩 가볍게.
+                from modules import (
+                    image_analyzer, layout_planner, post_generator,
+                    style_profiler, thumbnail_maker,
+                )
+                try:
+                    with st.status("작업 중...", expanded=True) as s:
+                        st.write("문체 로드…")
+                        guide = style_profiler.load_style_guide()
+                        st.write("사진 분석…")
+                        analysis = image_analyzer.analyze_images(images, _structure_key, "감성 중심")
+                        st.write("초안 작성…")
+                        post = post_generator.generate_post(
+                            structure_key=_structure_key, keyword=_keyword,
+                            product_link=_product_link, required_links=_req_links,
+                            sponsor_type=_sponsor, memo=_memo, length=1500,
+                            photo_style="감성 중심", optional_fields={},
+                            style_guide=guide, image_analysis=analysis,
+                        )
+                        layout = layout_planner.plan_layout(post, analysis)
+                        st.write("썸네일…")
+                        rep = next((p["index"] for p in analysis.get("photos", [])
+                                    if p.get("role") == "대표 이미지" and p.get("keep", True)), 1)
+                        rep_b = images[rep - 1] if 1 <= rep <= len(images) else images[0]
+                        thumb, _ = thumbnail_maker.generate_thumbnail(
+                            rep_b, post.get("thumbnail_title") or [_keyword or "REVIEW"])
+                        s.update(label="완료", state="complete", expanded=False)
+                    st.session_state["draft"] = {
+                        "post": post, "layout": layout, "images": images,
+                        "thumb": thumb, "blog_id": _blog_id, "font": _font,
+                        "size": _size,
+                    }
+                except Exception as e:
+                    st.error(f"오류: {e}")
 
     # --- 생성 결과 편집 + 저장 ---
     d = st.session_state.get("draft")
     if d:
         post = d["post"]
         st.divider()
-        st.subheader("✏️ 수정 후 저장")
+        rc1, rc2 = st.columns([3, 1])
+        with rc1:
+            st.subheader("✏️ 수정 후 저장")
+        with rc2:
+            if st.button("🔄 다시 쓰기", use_container_width=True):
+                st.session_state["_do_rewrite"] = True
+                del st.session_state["draft"]
+                st.rerun()
         if d.get("thumb"):
             st.image(d["thumb"], caption="썸네일", width=240)
         titles = post.get("title_candidates") or [""]
