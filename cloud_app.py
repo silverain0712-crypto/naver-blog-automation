@@ -48,7 +48,8 @@ def _check_password():
     st.stop()
 
 
-_check_password()
+# 비밀번호 잠금 비활성화(공개). 다시 켜려면 아래 줄의 주석을 풀고 APP_PASSWORD 설정.
+# _check_password()
 
 st.title("📝 비비 글감·초안")
 
