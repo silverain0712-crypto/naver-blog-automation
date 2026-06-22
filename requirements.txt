@@ -1,8 +1,7 @@
+# 클라우드 앱(cloud_app.py)용 — 가볍게 유지(콜드스타트/빌드 속도).
+# 맥 워커/포스터는 requirements-mac.txt 사용(playwright 포함).
 streamlit>=1.40
 anthropic>=0.69
-google-genai>=1.0
 pillow>=10.4
 python-dotenv>=1.0
-playwright>=1.40
-qrcode>=7.0
 httpx>=0.27

@@ -17,20 +17,8 @@ try:
 except Exception:
     pass
 
-import io
-import json
-
-from PIL import Image
-
 import config
-from modules import (
-    image_analyzer,
-    layout_planner,
-    post_generator,
-    store,
-    style_profiler,
-    thumbnail_maker,
-)
+from modules import store  # 가벼움(httpx). 무거운 생성 모듈은 '초안 생성' 시 지연 로드.
 
 st.set_page_config(page_title="비비 글감·초안", page_icon="📝", layout="centered")
 
@@ -109,6 +97,11 @@ with tab_new:
         elif not uploaded:
             st.error("사진을 한 장 이상 올려주세요.")
         else:
+            # 무거운 모듈(anthropic/PIL)은 여기서만 로드 → 첫 화면 로딩 가볍게.
+            from modules import (
+                image_analyzer, layout_planner, post_generator,
+                style_profiler, thumbnail_maker,
+            )
             images = [f.getvalue() for f in uploaded]
             structure_key = config.POST_TYPES[post_type_label]
             req_links = [l.strip() for l in required_links_raw.splitlines() if l.strip()]

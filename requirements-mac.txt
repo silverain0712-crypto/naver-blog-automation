@@ -1,0 +1,4 @@
+# 맥(워커/포스터)용 — 클라우드 의존성 + 네이버 브라우저 자동화.
+# 설치: pip install -r requirements-mac.txt  그리고  python3 -m playwright install chromium
+-r requirements.txt
+playwright>=1.40
