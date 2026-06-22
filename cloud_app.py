@@ -67,9 +67,16 @@ tab_new, tab_list = st.tabs(["✍️ 새 초안", "📋 내 목록"])
 
 # ===================== 새 초안 =====================
 with tab_new:
+    _fk = st.session_state.setdefault("form_gen", 0)
+    if st.button("🗒️ 새로 입력", help="현재 초안을 지우고 새 글감을 입력합니다"):
+        for k in ["draft", "draft_params", "title_pick", "edit_body", "edit_tags"]:
+            st.session_state.pop(k, None)
+        st.session_state["form_gen"] = _fk + 1
+        st.rerun()
+
     uploaded = st.file_uploader(
         "사진 업로드 (여러 장, 순서가 흐름)", type=config.IMAGE_TYPES,
-        accept_multiple_files=True,
+        accept_multiple_files=True, key=f"upload_{st.session_state['form_gen']}",
     )
     if uploaded:
         st.image([f.getvalue() for f in uploaded], width=90)
