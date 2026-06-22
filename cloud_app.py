@@ -166,8 +166,7 @@ with tab_new:
                 data = {
                     "thumbnail_title": post.get("thumbnail_title", []),
                     "subheadings": post.get("subheadings", []),
-                    "captions": {str(p["photo_number"]): p["caption"]
-                                 for p in post.get("photo_placement", []) if p.get("caption")},
+                    "captions": {},
                     "font": d["font"], "size": d["size"], "blog_id": d["blog_id"],
                     "suggested_keywords": post.get("suggested_keywords", []),
                     "confirm_needed": post.get("confirm_needed", []),
@@ -190,6 +189,16 @@ with tab_new:
 
 # ===================== 내 목록 =====================
 with tab_list:
+    if config.APP_PASSWORD and not st.session_state.get("list_authed"):
+        pw = st.text_input("비밀번호를 입력하세요", type="password", key="list_pw")
+        if st.button("확인", key="list_pw_btn"):
+            if pw == config.APP_PASSWORD:
+                st.session_state["list_authed"] = True
+                st.rerun()
+            else:
+                st.error("비밀번호가 틀렸습니다.")
+        st.stop()
+
     if not store.enabled():
         st.info("Supabase 를 설정하면 목록이 보입니다.")
     else:
