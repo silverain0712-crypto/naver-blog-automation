@@ -75,7 +75,7 @@ with tab_new:
         st.rerun()
 
     uploaded = st.file_uploader(
-        "사진 업로드 (여러 장, 순서가 흐름)", type=config.IMAGE_TYPES,
+        "사진 업로드 (선택 — 없으면 Pexels 스톡 자동 검색)", type=config.IMAGE_TYPES,
         accept_multiple_files=True, key=f"upload_{st.session_state['form_gen']}",
     )
     if uploaded:
@@ -90,7 +90,11 @@ with tab_new:
     keyword = st.text_input("핵심 키워드 (비우면 AI 제안)")
     product_link = st.text_input("상품 링크 (선택)")
     required_links_raw = st.text_area("필수 삽입 링크 (한 줄에 하나)", height=68)
-    memo = st.text_area("메모/글감 (방문이유·후기·가격·주차 등)", height=120)
+    memo = st.text_area(
+        "메모/글감 (방문이유·후기·가격·주차 등)\n"
+        "💡 '이미지 만들어줘' 추가 → DALL-E 3 생성 / 사진 없으면 Pexels 스톡 자동 검색",
+        height=120,
+    )
     blog_id = st.text_input("내 블로그 아이디", value="bbnation", key="gen_blog")
     cc1, cc2 = st.columns(2)
     with cc1:
@@ -105,58 +109,70 @@ with tab_new:
         else:
             _p = st.session_state.get("draft_params") if _rewrite else None
             images = _p["images"] if _p else ([f.getvalue() for f in uploaded] if uploaded else [])
-            if not images:
-                st.error("사진을 한 장 이상 올려주세요.")
-            else:
-                _structure_key = (_p["structure_key"] if _p else config.POST_TYPES[post_type_label])
-                _keyword      = (_p["keyword"]       if _p else keyword)
-                _product_link = (_p["product_link"]  if _p else product_link)
-                _req_links    = (_p["req_links"]      if _p else [l.strip() for l in required_links_raw.splitlines() if l.strip()])
-                _sponsor      = (_p["sponsor"]        if _p else sponsor)
-                _memo         = (_p["memo"]           if _p else memo)
-                _blog_id      = (_p["blog_id"]        if _p else blog_id)
-                _font         = (_p["body_font"]      if _p else body_font)
-                _size         = (_p["body_size"]      if _p else int(body_size))
-                # 파라미터 저장 (다시 쓰기용)
-                st.session_state["draft_params"] = dict(
-                    images=images, structure_key=_structure_key, keyword=_keyword,
-                    product_link=_product_link, req_links=_req_links, sponsor=_sponsor,
-                    memo=_memo, blog_id=_blog_id, body_font=_font, body_size=_size,
-                )
-                # 무거운 모듈(anthropic/PIL)은 여기서만 로드 → 첫 화면 로딩 가볍게.
-                from modules import (
-                    image_analyzer, layout_planner, post_generator,
-                    style_profiler, thumbnail_maker,
-                )
-                try:
-                    with st.status("작업 중...", expanded=True) as s:
-                        st.write("문체 로드…")
-                        guide = style_profiler.load_style_guide()
-                        st.write("사진 분석…")
-                        analysis = image_analyzer.analyze_images(images, _structure_key, "감성 중심")
-                        st.write("초안 작성…")
-                        post = post_generator.generate_post(
-                            structure_key=_structure_key, keyword=_keyword,
-                            product_link=_product_link, required_links=_req_links,
-                            sponsor_type=_sponsor, memo=_memo, length=1500,
-                            photo_style="감성 중심", optional_fields={},
-                            style_guide=guide, image_analysis=analysis,
-                        )
-                        layout = layout_planner.plan_layout(post, analysis)
-                        st.write("썸네일…")
-                        rep = next((p["index"] for p in analysis.get("photos", [])
-                                    if p.get("role") == "대표 이미지" and p.get("keep", True)), 1)
-                        rep_b = images[rep - 1] if 1 <= rep <= len(images) else images[0]
-                        thumb, _ = thumbnail_maker.generate_thumbnail(
-                            rep_b, post.get("thumbnail_title") or [_keyword or "REVIEW"])
-                        s.update(label="완료", state="complete", expanded=False)
-                    st.session_state["draft"] = {
-                        "post": post, "layout": layout, "images": images,
-                        "thumb": thumb, "blog_id": _blog_id, "font": _font,
-                        "size": _size,
-                    }
-                except Exception as e:
-                    st.error(f"오류: {e}")
+            _structure_key = (_p["structure_key"] if _p else config.POST_TYPES[post_type_label])
+            _keyword      = (_p["keyword"]       if _p else keyword)
+            _product_link = (_p["product_link"]  if _p else product_link)
+            _req_links    = (_p["req_links"]      if _p else [l.strip() for l in required_links_raw.splitlines() if l.strip()])
+            _sponsor      = (_p["sponsor"]        if _p else sponsor)
+            _memo         = (_p["memo"]           if _p else memo)
+            _blog_id      = (_p["blog_id"]        if _p else blog_id)
+            _font         = (_p["body_font"]      if _p else body_font)
+            _size         = (_p["body_size"]      if _p else int(body_size))
+
+            # 이미지 자동 수급 여부 결정
+            from modules.image_finder import detect_generation_request, clean_generation_request
+            _use_dalle = detect_generation_request(_memo, _keyword)
+            _need_auto_images = not images or _use_dalle  # 사진 없거나 생성 요청 시
+
+            # 파라미터 저장 (다시 쓰기용) — 생성 요청 문구는 정제 후 저장
+            _memo_clean = clean_generation_request(_memo) if _use_dalle else _memo
+            st.session_state["draft_params"] = dict(
+                images=images, structure_key=_structure_key, keyword=_keyword,
+                product_link=_product_link, req_links=_req_links, sponsor=_sponsor,
+                memo=_memo_clean, blog_id=_blog_id, body_font=_font, body_size=_size,
+            )
+            # 무거운 모듈(anthropic/PIL)은 여기서만 로드 → 첫 화면 로딩 가볍게.
+            from modules import (
+                image_analyzer, layout_planner, post_generator,
+                style_profiler, thumbnail_maker,
+            )
+            try:
+                with st.status("작업 중...", expanded=True) as s:
+                    # --- 이미지 자동 수급 ---
+                    if _need_auto_images:
+                        from modules.image_finder import fetch_images
+                        _label = "DALL-E 3 생성 중…" if _use_dalle else "Pexels 스톡 검색 중…"
+                        st.write(_label)
+                        auto_imgs, _src = fetch_images(_keyword or _memo_clean[:40], _memo_clean, _use_dalle)
+                        images = images + auto_imgs  # 기존 사진이 있으면 앞에 유지
+                        st.caption(f"자동 추가: {_src} {len(auto_imgs)}장")
+                    st.write("문체 로드…")
+                    guide = style_profiler.load_style_guide()
+                    st.write("사진 분석…")
+                    analysis = image_analyzer.analyze_images(images, _structure_key, "감성 중심")
+                    st.write("초안 작성…")
+                    post = post_generator.generate_post(
+                        structure_key=_structure_key, keyword=_keyword,
+                        product_link=_product_link, required_links=_req_links,
+                        sponsor_type=_sponsor, memo=_memo_clean, length=1500,
+                        photo_style="감성 중심", optional_fields={},
+                        style_guide=guide, image_analysis=analysis,
+                    )
+                    layout = layout_planner.plan_layout(post, analysis)
+                    st.write("썸네일…")
+                    rep = next((p["index"] for p in analysis.get("photos", [])
+                                if p.get("role") == "대표 이미지" and p.get("keep", True)), 1)
+                    rep_b = images[rep - 1] if 1 <= rep <= len(images) else images[0]
+                    thumb, _ = thumbnail_maker.generate_thumbnail(
+                        rep_b, post.get("thumbnail_title") or [_keyword or "REVIEW"])
+                    s.update(label="완료", state="complete", expanded=False)
+                st.session_state["draft"] = {
+                    "post": post, "layout": layout, "images": images,
+                    "thumb": thumb, "blog_id": _blog_id, "font": _font,
+                    "size": _size,
+                }
+            except Exception as e:
+                st.error(f"오류: {e}")
 
     # --- 생성 결과 편집 + 저장 ---
     d = st.session_state.get("draft")
