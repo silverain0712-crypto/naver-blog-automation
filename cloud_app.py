@@ -48,6 +48,14 @@ with st.sidebar:
         st.success("Claude 키 OK")
     else:
         st.error("ANTHROPIC_API_KEY 없음")
+    if config.UNSPLASH_ACCESS_KEY:
+        st.success("Unsplash 키 OK")
+    else:
+        st.warning("UNSPLASH_ACCESS_KEY 없음 (스톡 검색 불가)")
+    if config.OPENAI_API_KEY:
+        st.success("OpenAI 키 OK")
+    else:
+        st.warning("OPENAI_API_KEY 없음 (DALL-E 생성 불가)")
     if store.enabled():
         st.success("저장소 연결 OK")
     else:

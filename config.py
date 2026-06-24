@@ -10,8 +10,8 @@ load_dotenv()
 # --- API 키 ---------------------------------------------------------------
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()   # DALL-E 3 이미지 생성
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "").strip()   # 무료 스톡 사진 검색
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()        # DALL-E 3 이미지 생성
+UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "").strip()  # 무료 스톡 사진 검색
 # 핸드폰/네트워크 접속 시 보호용 비밀번호(설정하면 잠금, 비우면 잠금 없음)
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 
