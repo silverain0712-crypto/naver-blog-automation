@@ -7,6 +7,7 @@ Streamlit Cloud 에서는 secrets 가 자동으로 env 로 안 들어가므로, 
 """
 
 import os
+import subprocess
 
 import streamlit as st
 
@@ -71,7 +72,7 @@ with st.sidebar:
                 config.STYLE_PROFILE_CACHE.unlink()
         st.success(f"새 글 {len(res['added'])}개 학습 (스킵 {res['skipped']})")
 
-tab_new, tab_list = st.tabs(["✍️ 새 초안", "📋 내 목록"])
+tab_new, tab_list, tab_gif = st.tabs(["✍️ 새 초안", "📋 내 목록", "🎬 GIF 변환"])
 
 # ===================== 새 초안 =====================
 with tab_new:
@@ -286,3 +287,91 @@ with tab_list:
                     if st.button("삭제", key=f"d_{row['id']}"):
                         store.delete_draft(row["id"])
                         st.rerun()
+
+# ===================== GIF 변환 =====================
+with tab_gif:
+    st.subheader("🎬 영상 → GIF 변환")
+    st.caption("네이버 블로그 업로드 제한: 10MB 이하 · 2-pass 팔레트 방식으로 고품질 변환")
+
+    gif_video = st.file_uploader(
+        "영상 업로드", type=config.VIDEO_TYPES,
+        key=f"gif_upload_{st.session_state.get('gif_gen', 0)}",
+    )
+
+    if st.button("🗑️ 초기화", key="gif_reset"):
+        for k in ["gif_result", "gif_video_bytes"]:
+            st.session_state.pop(k, None)
+        st.session_state["gif_gen"] = st.session_state.get("gif_gen", 0) + 1
+        st.rerun()
+
+    if gif_video:
+        video_bytes = gif_video.read()
+        st.session_state["gif_video_bytes"] = video_bytes
+        st.video(video_bytes)
+
+        st.divider()
+        st.markdown("**✂️ 구간 설정**")
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            gif_start = st.number_input("시작 (초)", min_value=0.0, value=0.0, step=0.5, format="%.1f")
+        with gc2:
+            gif_end = st.number_input("끝 (초)", min_value=0.5, value=3.0, step=0.5, format="%.1f")
+
+        clip_sec = max(gif_end - gif_start, 0.1)
+        st.caption(f"클립 길이: **{clip_sec:.1f}초**")
+
+        if gif_end <= gif_start:
+            st.warning("끝(초)이 시작(초)보다 커야 합니다.")
+        else:
+            st.divider()
+            st.markdown("**⚙️ 품질 설정**")
+            gq1, gq2 = st.columns(2)
+            with gq1:
+                gif_width = st.select_slider(
+                    "가로 크기 (px)", options=[320, 480, 640],
+                    value=480, help="작을수록 파일 크기 감소"
+                )
+            with gq2:
+                gif_fps = st.select_slider(
+                    "FPS", options=[8, 10, 12, 15],
+                    value=10, help="낮을수록 파일 크기 감소"
+                )
+
+            # 예상 크기 안내 (대략적)
+            est_mb = clip_sec * gif_fps * (gif_width / 480) ** 2 * 0.18
+            color = "green" if est_mb < 8 else "orange" if est_mb < 12 else "red"
+            st.markdown(f"예상 크기: :{color}[약 {est_mb:.1f}MB]")
+
+            if st.button("🎬 GIF 변환", type="primary", use_container_width=True):
+                from modules import gif_maker
+                try:
+                    with st.spinner("변환 중… (영상 길이에 따라 10~30초 소요)"):
+                        gif_bytes, size_mb = gif_maker.convert_to_gif(
+                            video_bytes=video_bytes,
+                            start=gif_start,
+                            end=gif_end,
+                            width=gif_width,
+                            fps=gif_fps,
+                        )
+                    st.session_state["gif_result"] = {"data": gif_bytes, "size_mb": size_mb}
+                except subprocess.CalledProcessError as e:
+                    st.error(f"변환 실패: ffmpeg 오류\n```\n{e.stderr.decode()[-500:] if e.stderr else ''}\n```")
+                except Exception as e:
+                    st.error(f"변환 실패: {e}")
+
+    result = st.session_state.get("gif_result")
+    if result:
+        st.divider()
+        size_mb = result["size_mb"]
+        gif_bytes = result["data"]
+        if size_mb > 10:
+            st.error(f"파일 크기 {size_mb:.1f}MB — 네이버 10MB 초과 ⚠️")
+            st.caption("가로 크기를 320px로 줄이거나 FPS를 낮추거나 구간을 짧게 해보세요.")
+        else:
+            st.success(f"완료! {size_mb:.1f}MB — 네이버 업로드 가능 ✅")
+        st.image(gif_bytes, caption=f"{size_mb:.1f}MB")
+        st.download_button(
+            "⬇️ GIF 다운로드", data=gif_bytes,
+            file_name="naver_blog.gif", mime="image/gif",
+            use_container_width=True,
+        )
