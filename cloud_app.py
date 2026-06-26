@@ -211,8 +211,9 @@ with tab_new:
         hashtags = st.text_input("해시태그 (글 맨 끝에 자동 삽입)", value=tag_str, key="edit_tags")
 
         auto = st.checkbox(
-            "🚀 저장 후 맥에서 네이버 자동 임시저장 (맥 워커가 켜져 있을 때)", value=False,
-            help="체크하면 맥이 켜져 있을 때 자동으로 네이버에 임시저장합니다(발행은 직접).",
+            "🚀 저장 후 맥에서 네이버 자동 임시저장 (맥 워커가 켜져 있을 때)", value=True,
+            help="체크하면 맥이 켜져 있을 때 자동으로 네이버에 임시저장합니다(발행은 직접). "
+                 "끄면 목록에만 저장되고 네이버로는 안 보냅니다.",
         )
         if st.button("💾 저장 (목록에 추가)", type="primary", use_container_width=True):
             if not store.enabled():
