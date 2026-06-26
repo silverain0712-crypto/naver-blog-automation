@@ -142,7 +142,8 @@ def profile_to_prompt(guide: dict) -> str:
     example = (guide.get("recent_example") or "").strip()
     if example:
         out += (
-            "\n\n[가장 최근 발행 글 예시 — 이 톤·호흡·줄바꿈을 그대로 따라해라]\n"
-            "```\n" + example[:1400] + "\n```"
+            "\n\n[가장 최근 발행 글 예시 — 이 톤·호흡·줄바꿈, 그리고 이 정도 분량·"
+            "소제목 개수를 그대로 따라해라]\n"
+            "```\n" + example[:2600] + "\n```"
         )
     return out

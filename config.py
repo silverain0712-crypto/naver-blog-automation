@@ -57,7 +57,7 @@ SPONSOR_TYPES = [
 ]
 
 # 글 길이(자)
-POST_LENGTHS = [1000, 1500, 2000]
+POST_LENGTHS = [1500, 2000, 2500]
 
 # 업로드 허용 확장자
 IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
