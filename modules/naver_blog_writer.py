@@ -15,8 +15,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
+
+from PIL import Image
 
 from playwright.sync_api import sync_playwright
 
@@ -401,6 +404,88 @@ def _insert_image(frame, page, paths, log):
         time.sleep(1)
 
 
+def _resize_for_upload(paths, log, max_side=1600, quality=85):
+    """업로드 전 이미지를 max_side 이내로 축소(임시파일). 원본이 크면 네이버 업로드가
+    '준비 중 0/N' 에서 멈춰 저장까지 막히므로 줄여서 올린다. 실패 시 원본 사용."""
+    out = []
+    tmpdir = Path(tempfile.mkdtemp(prefix="nbw_resize_"))
+    for i, p in enumerate(paths):
+        p = Path(p)
+        try:
+            im = Image.open(p).convert("RGB")
+            im.thumbnail((max_side, max_side))
+            dst = tmpdir / f"{i:02d}_{p.stem}.jpg"
+            im.save(dst, "JPEG", quality=quality)
+            out.append(str(dst))
+        except Exception as e:
+            log(f"  리사이즈 실패({p.name}): {str(e)[:50]} → 원본 사용")
+            out.append(str(p))
+    log(f"사진 {len(out)}장 리사이즈(최대 {max_side}px).")
+    return out
+
+
+def _force_dismiss_popups(frame, page, log):
+    """버튼 클릭을 막는 팝업/오버레이를 최대한 닫는다(이전작성글 + 일반 알림)."""
+    _dismiss_continue_popup(frame, log)
+    _dismiss_continue_popup(page, log)
+    for ctx in (frame, page):
+        for sel in ("button:has-text('확인')", "button:has-text('닫기')",
+                    ".se-popup-button-close", "[class*=popup] button[class*=close]"):
+            try:
+                loc = ctx.locator(sel)
+                if loc.count():
+                    loc.first.click(timeout=1200)
+            except Exception:
+                pass
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+
+
+def _insert_all_images(frame, page, paths, log):
+    """모든 사진을 '한 번의 파일선택'으로 본문 끝에 업로드(인라인 다중삽입이 불안정해서).
+
+    리사이즈로 업로드 멈춤을 줄이고, 팝업이 버튼을 막으면 닫고 재시도한다.
+    """
+    small = _resize_for_upload(paths, log)
+    before = _img_count(frame)
+    chooser = None
+    for attempt in range(4):
+        _force_dismiss_popups(frame, page, log)
+        try:
+            frame.locator(".se-text-paragraph").last.click(force=True, timeout=2500)
+            page.keyboard.press("End")
+        except Exception:
+            pass
+        try:
+            with page.expect_file_chooser(timeout=12000) as fc:
+                frame.locator("button.se-image-toolbar-button").first.click(timeout=5000)
+            chooser = fc.value
+            break
+        except Exception as e:
+            log(f"  사진 업로드 재시도 {attempt + 1}/4 ({str(e)[:50]})")
+            time.sleep(2)
+    if chooser is None:
+        raise RuntimeError("사진 업로드 버튼이 팝업에 막혀 열리지 않음.")
+    chooser.set_files(small)
+    time.sleep(2)
+    try:
+        dlg = frame.locator(":text('개별사진')")
+        if dlg.count():
+            dlg.first.click(timeout=3000)
+    except Exception:
+        pass
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        if not _busy_text(page) and _img_count(frame) >= before + 1:
+            break
+        time.sleep(2)
+    done = _img_count(frame) - before
+    log(f"사진 일괄 업로드: {done}/{len(small)}장 들어감.")
+    return done
+
+
 def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                           subheadings=None, family="나눔스퀘어", size=16):
     """본문을 비비 글 형식으로 입력한다.
@@ -488,19 +573,12 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             n = int(mp.group(1))
             if 1 <= n <= len(image_paths):
                 used.add(n)
-                try:
-                    kb.press("Enter")
-                    _insert_image(frame, page, [image_paths[n - 1]], log)
-                    _clear_format_toggles(frame, log)
-                    inserted += 1
-                    log(f"[사진{n}] 위치에 삽입 완료.")
-                    cap = captions.get(str(n)) or captions.get(n)
-                    if cap:
-                        gray_on(); _type_lines(kb, cap); log(f"[사진{n}] 캡션(회색) 입력.")
-                    body_on()
-                except Exception as e:
-                    log(f"[사진{n}] 삽입 실패({e}). 마커로 남깁니다.")
-                    kb.insert_text(tok)
+                # 사진은 본문 끝에 '한 번에' 업로드(인라인 다중삽입이 불안정).
+                # 위치는 [사진N] 마커로 남겨 사용자가 끌어다 배치한다.
+                kb.insert_text(f"[사진{n}]")
+                cap = captions.get(str(n)) or captions.get(n)
+                if cap:
+                    kb.press("Enter"); gray_on(); _type_lines(kb, cap); body_on()
             else:
                 kb.insert_text(tok)
         elif mv:
@@ -517,27 +595,18 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 if i < len(body_lines) - 1:
                     kb.press("Enter")
 
-    # 본문에 배치되지 않은 사진은 최하단에 모아서 전부 넣는다(사용자가 옮기거나 삭제).
-    leftover = [n for n in range(1, len(image_paths) + 1) if n not in used]
-    if leftover:
+    # 모든 사진을 본문 끝에 '한 번에' 업로드한다(인라인 다중삽입이 불안정해서).
+    # [사진N] 마커는 본문에 남아 있어 위치 참고가 된다.
+    if image_paths:
         kb.press("Enter"); kb.press("Enter")
         _insert_divider(frame, log, "line5")
-        body_on()
-        gray_on()
-        _type_lines(kb, "(아래는 본문에 자동 배치되지 않은 사진입니다. 원하는 위치로 옮기거나 삭제하세요.)")
-        kb.press("Enter")
-        body_on()
-        for n in leftover:
-            try:
-                kb.press("Enter")
-                _insert_image(frame, page, [image_paths[n - 1]], log)
-                _clear_format_toggles(frame, log)
-                inserted += 1
-                log(f"미배치 사진{n} 최하단에 삽입.")
-            except Exception as e:
-                log(f"미배치 사진{n} 최하단 삽입 실패({e}).")
-        body_on()
-        log(f"미배치 사진 {len(leftover)}장을 최하단에 모아 넣었습니다.")
+        body_on(); gray_on()
+        _type_lines(kb, "(사진을 아래에 한 번에 올렸습니다. 위 [사진N] 표시 위치로 끌어다 배치하세요.)")
+        kb.press("Enter"); body_on()
+        try:
+            inserted = _insert_all_images(frame, page, image_paths, log)
+        except Exception as e:
+            log(f"사진 일괄 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
 
     log(f"본문 입력 완료. 사진 {inserted}장 삽입, 소제목 {len(sub_set)}개 스타일.")
     return True
