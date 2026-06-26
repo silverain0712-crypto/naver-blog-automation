@@ -317,12 +317,73 @@ _NOTICE_KEYS = ("수수료", "제공받아", "제공 받아", "원고료", "협�
                 "쇼핑 커넥트", "쇼핑커넥트", "무상으로", "대가를")
 
 
+# 업로드 진행/저장 거부를 알리는 화면 문구들(이게 떠 있으면 저장이 거부된다)
+_BUSY_TEXTS = ("업로드 준비 중", "업로드 중", "요청하신 작업이 진행", "완료 후 다시")
+
+
+def _img_count(frame):
+    """에디터 본문에 들어간 이미지 컴포넌트 수(업로드 완료 확인용, best-effort)."""
+    for sel in ("img.se-image-resource", ".se-component.se-image", ".se-image"):
+        try:
+            c = frame.locator(sel).count()
+            if c:
+                return c
+        except Exception:
+            pass
+    return 0
+
+
+def _busy_text(page):
+    """업로드/작업 진행 중 문구가 화면에 있으면 그 문구를, 없으면 None."""
+    for kw in _BUSY_TEXTS:
+        try:
+            if page.get_by_text(kw).count():
+                return kw
+        except Exception:
+            pass
+    return None
+
+
+def _wait_uploads_done(page, log, timeout=25):
+    """사진 업로드/진행 중 문구가 사라질 때까지 대기. 안 끝나면 False.
+
+    네이버 업로드가 '준비 중 0/N' 에서 멈추는 일이 잦아, 무한정 기다리지 않고
+    제한시간 내 안 끝나면 False 를 돌려 빨리 실패(=정직한 error)하도록 한다.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _busy_text(page):
+            return True
+        time.sleep(1)
+    log("경고: 업로드가 제한시간 내 끝나지 않았습니다.")
+    return False
+
+
 def _insert_image(frame, page, paths, log):
-    """현재 커서 위치에 사진을 삽입. 여러 장이면 '개별사진' 레이아웃 선택."""
-    with page.expect_file_chooser(timeout=8000) as fc:
-        frame.locator("button.se-image-toolbar-button").first.click(timeout=4000)
-    fc.value.set_files([str(p) for p in paths])
-    time.sleep(2)
+    """현재 커서 위치에 사진을 삽입. 업로드가 '완료될 때까지' 기다린 뒤 반환한다.
+
+    이전 업로드가 안 끝났는데 다음 사진을 시도하면 filechooser 가 안 떠서
+    타임아웃 나고 업로드가 멈춰(0/N) 저장까지 거부되므로, 한 장씩 끝까지 대기한다.
+    """
+    before = _img_count(frame)
+    # 직전 업로드가 진행 중이면 먼저 끝나길 기다린다(멈춰 있으면 곧 포기)
+    _wait_uploads_done(page, log)
+
+    chooser = None
+    for attempt in range(2):
+        try:
+            with page.expect_file_chooser(timeout=10000) as fc:
+                frame.locator("button.se-image-toolbar-button").first.click(timeout=4000)
+            chooser = fc.value
+            break
+        except Exception as e:
+            log(f"  파일선택창 재시도 {attempt + 1}/2 ({str(e)[:60]})")
+            _dismiss_continue_popup(frame, log)
+            time.sleep(1)
+    if chooser is None:
+        raise RuntimeError("사진 파일선택창이 열리지 않음(업로드 충돌 가능).")
+    chooser.set_files([str(p) for p in paths])
+    time.sleep(1.5)
     # 여러 장 첨부 시 '사진 첨부 방식'(개별사진/콜라주/슬라이드) 팝업 → 개별사진
     try:
         dlg = frame.locator(":text('개별사진')")
@@ -330,7 +391,14 @@ def _insert_image(frame, page, paths, log):
             dlg.first.click(timeout=3000)
     except Exception:
         pass
-    time.sleep(4)
+    # 이 업로드가 실제로 끝날 때까지 대기(진행 문구 사라짐 + 이미지 수 증가)
+    _wait_uploads_done(page, log)
+    target = before + len(paths)
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        if _img_count(frame) >= target:
+            break
+        time.sleep(1)
 
 
 def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
@@ -411,6 +479,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     body_on()  # 구분선 뒤 본문 스타일 재적용(검정 나눔스퀘어)
 
     inserted = 0
+    used = set()  # 본문에 실제로 배치된 사진 번호
     tokens = re.split(r"(\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
     for tok in tokens:
         mp = re.match(r"\[사진\s*(\d+)\]", tok)
@@ -418,6 +487,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         if mp:
             n = int(mp.group(1))
             if 1 <= n <= len(image_paths):
+                used.add(n)
                 try:
                     kb.press("Enter")
                     _insert_image(frame, page, [image_paths[n - 1]], log)
@@ -446,6 +516,29 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                     kb.insert_text(line)
                 if i < len(body_lines) - 1:
                     kb.press("Enter")
+
+    # 본문에 배치되지 않은 사진은 최하단에 모아서 전부 넣는다(사용자가 옮기거나 삭제).
+    leftover = [n for n in range(1, len(image_paths) + 1) if n not in used]
+    if leftover:
+        kb.press("Enter"); kb.press("Enter")
+        _insert_divider(frame, log, "line5")
+        body_on()
+        gray_on()
+        _type_lines(kb, "(아래는 본문에 자동 배치되지 않은 사진입니다. 원하는 위치로 옮기거나 삭제하세요.)")
+        kb.press("Enter")
+        body_on()
+        for n in leftover:
+            try:
+                kb.press("Enter")
+                _insert_image(frame, page, [image_paths[n - 1]], log)
+                _clear_format_toggles(frame, log)
+                inserted += 1
+                log(f"미배치 사진{n} 최하단에 삽입.")
+            except Exception as e:
+                log(f"미배치 사진{n} 최하단 삽입 실패({e}).")
+        body_on()
+        log(f"미배치 사진 {len(leftover)}장을 최하단에 모아 넣었습니다.")
+
     log(f"본문 입력 완료. 사진 {inserted}장 삽입, 소제목 {len(sub_set)}개 스타일.")
     return True
 
@@ -484,7 +577,14 @@ def _save_draft(frame, log):
 
     버튼 종류: '저장'(임시저장), '임시저장된 글 보기, N개'(목록), '발행'.
     정확히 '저장'/'임시저장' 만 누른다.
+
+    저장 전에 사진 업로드가 끝났는지 확인하고, 저장 후 '작업 진행 중' 거부
+    배너가 뜨면 대기 후 재시도한다. 끝까지 거부되면 False(=실패) 를 반환해
+    워커가 거짓으로 'posted' 표시하지 않도록 한다.
     """
+    page = frame.page
+    # 업로드가 안 끝났는데 저장하면 "요청하신 작업이 진행 중" 으로 거부됨 → 먼저 대기
+    _wait_uploads_done(page, log)
     try:
         buttons = frame.get_by_role("button")
         n = buttons.count()
@@ -514,6 +614,22 @@ def _save_draft(frame, log):
             b.click(timeout=3000)
             log(f"임시저장 클릭: '{name}'.")
             time.sleep(2)
+            # 저장이 거부됐는지 확인('작업 진행 중' 배너) → 대기 후 재시도
+            for _ in range(2):
+                busy = _busy_text(page)
+                if not busy:
+                    break
+                log(f"저장 거부('{busy}') 감지 → 업로드 대기 후 재저장")
+                _wait_uploads_done(page, log)
+                try:
+                    b.click(timeout=3000)
+                    time.sleep(2)
+                except Exception:
+                    pass
+            if _busy_text(page):
+                log("저장 실패: 작업이 끝나지 않아 임시저장이 거부됨(거짓 성공 방지).")
+                return False
+            log("임시저장 확인됨.")
             return True
         except Exception as e:
             log(f"저장 버튼 클릭 실패: {e}")
