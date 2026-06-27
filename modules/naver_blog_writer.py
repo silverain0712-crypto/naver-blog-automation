@@ -337,13 +337,18 @@ def _img_count(frame):
 
 
 def _busy_text(page):
-    """업로드/작업 진행 중 문구가 화면에 있으면 그 문구를, 없으면 None."""
-    for kw in _BUSY_TEXTS:
-        try:
-            if page.get_by_text(kw).count():
-                return kw
-        except Exception:
-            pass
+    """업로드/작업 진행 중 문구가 화면에 있으면 그 문구를, 없으면 None.
+
+    진행 팝업(se-popup-progress '준비 중 0/N')은 에디터 iframe 안에 있으므로
+    최상위 page 뿐 아니라 모든 frame 을 검사해야 한다(안 그러면 업로드가 안 끝났는데
+    '안 바쁨' 으로 잘못 읽어 저장이 먼저 나가 실패한다)."""
+    for fr in page.frames:
+        for kw in _BUSY_TEXTS:
+            try:
+                if fr.get_by_text(kw).count():
+                    return kw
+            except Exception:
+                pass
     return None
 
 
@@ -476,13 +481,15 @@ def _insert_all_images(frame, page, paths, log):
             dlg.first.click(timeout=3000)
     except Exception:
         pass
-    deadline = time.time() + 120
+    deadline = time.time() + 240  # 여러 장은 서버 업로드가 오래 걸릴 수 있음
     while time.time() < deadline:
-        if not _busy_text(page) and _img_count(frame) >= before + 1:
+        b = _busy_text(page)
+        if not b and _img_count(frame) >= before + 1:
             break
-        time.sleep(2)
+        time.sleep(3)
     done = _img_count(frame) - before
-    log(f"사진 일괄 업로드: {done}/{len(small)}장 들어감.")
+    pend = _busy_text(page)
+    log(f"사진 일괄 업로드: {done}/{len(small)}장 들어감." + (f" (아직 진행중: {pend})" if pend else " 업로드 완료."))
     return done
 
 
@@ -641,6 +648,31 @@ def _upload_photos(frame, image_paths, log):
     log("사진 자동 업로드는 건너뜀(에디터 버전 차이). 본문 [사진N] 위치에 직접 넣어주세요.")
 
 
+def _temp_count(frame):
+    """상단 '저장 N'(임시저장 글 개수)를 읽는다. 못 읽으면 -1.
+
+    저장이 실제로 됐는지 확인하는 진짜 증거(클릭만으로는 거짓 성공이 남).
+    """
+    js = r"""() => {
+      const sels = ['[class*=save_count]','[class*=draft_count]','[class*=save] [class*=count]'];
+      for (const s of sels) {
+        for (const el of document.querySelectorAll(s)) {
+          const m = (el.innerText||'').match(/\d+/);
+          if (m) return parseInt(m[0]);
+        }
+      }
+      for (const b of document.querySelectorAll('button, a, span')) {
+        const t = (b.innerText||'').trim();
+        if (t.startsWith('저장')) { const m = t.match(/\d+/); if (m) return parseInt(m[0]); }
+      }
+      return -1;
+    }"""
+    try:
+        return frame.evaluate(js)
+    except Exception:
+        return -1
+
+
 def _save_draft(frame, log):
     """임시저장(저장) 클릭. 발행/목록보기는 절대 클릭하지 않는다.
 
@@ -654,56 +686,61 @@ def _save_draft(frame, log):
     page = frame.page
     # 업로드가 안 끝났는데 저장하면 "요청하신 작업이 진행 중" 으로 거부됨 → 먼저 대기
     _wait_uploads_done(page, log)
-    try:
-        buttons = frame.get_by_role("button")
-        n = buttons.count()
-    except Exception:
-        n = 0
-    candidates = []  # (우선순위, 인덱스, 이름, locator)
-    for i in range(n):
+    # '작성 중인 글이 있습니다' 등 팝업이 저장 버튼 클릭을 막으므로 먼저 닫는다
+    _force_dismiss_popups(frame, page, log)
+
+    def _find_save_btn():
         try:
-            b = buttons.nth(i)
-            name = (b.get_attribute("aria-label") or b.inner_text() or "").strip()
+            buttons = frame.get_by_role("button")
+            n = buttons.count()
         except Exception:
+            return None
+        cands = []
+        for i in range(n):
+            try:
+                b = buttons.nth(i)
+                name = (b.get_attribute("aria-label") or b.inner_text() or "").strip()
+            except Exception:
+                continue
+            if not name or any(f in name for f in FORBIDDEN):
+                continue
+            if any(x in name for x in ("보기", "목록")):
+                continue
+            if name in ("저장", "임시저장"):
+                cands.append((0, i, name, b))
+            elif "저장" in name:
+                cands.append((1, i, name, b))
+        cands.sort(key=lambda t: (t[0], t[1]))
+        return cands[0] if cands else None
+
+    before = _temp_count(frame)
+    # 최대 3회: 팝업 닫고 저장 클릭 → 임시저장 개수가 늘었는지로 '진짜' 확인
+    for attempt in range(3):
+        _force_dismiss_popups(frame, page, log)
+        _wait_uploads_done(page, log)
+        found = _find_save_btn()
+        if not found:
+            log("경고: 임시저장(저장) 버튼을 찾지 못했습니다.")
+            time.sleep(2)
             continue
-        if not name:
-            continue
-        if any(f in name for f in FORBIDDEN):
-            continue  # 발행류 제외
-        if any(x in name for x in ("보기", "목록")):
-            continue  # '임시저장된 글 보기' 제외
-        if name in ("저장", "임시저장"):
-            candidates.append((0, i, name, b))
-        elif "저장" in name:
-            candidates.append((1, i, name, b))
-    candidates.sort(key=lambda t: (t[0], t[1]))
-    if candidates:
-        _, _, name, b = candidates[0]
+        _, _, name, b = found
         try:
             b.click(timeout=3000)
-            log(f"임시저장 클릭: '{name}'.")
-            time.sleep(2)
-            # 저장이 거부됐는지 확인('작업 진행 중' 배너) → 대기 후 재시도
-            for _ in range(2):
-                busy = _busy_text(page)
-                if not busy:
-                    break
-                log(f"저장 거부('{busy}') 감지 → 업로드 대기 후 재저장")
-                _wait_uploads_done(page, log)
-                try:
-                    b.click(timeout=3000)
-                    time.sleep(2)
-                except Exception:
-                    pass
-            if _busy_text(page):
-                log("저장 실패: 작업이 끝나지 않아 임시저장이 거부됨(거짓 성공 방지).")
-                return False
-            log("임시저장 확인됨.")
-            return True
+            log(f"임시저장 클릭: '{name}' (시도 {attempt + 1}/3)")
         except Exception as e:
-            log(f"저장 버튼 클릭 실패: {e}")
-    log("경고: 임시저장(저장) 버튼을 자동으로 찾지 못했습니다. 창에서 직접 '저장'을 눌러주세요. "
-        "(발행은 누르지 마세요)")
+            log(f"  저장 클릭 막힘({str(e)[:50]}) → 팝업 닫고 재시도")
+            continue
+        time.sleep(3)
+        after = _temp_count(frame)
+        if before >= 0 and after > before:
+            log(f"임시저장 확인됨(개수 {before}→{after}).")  # 진짜 증거
+            return True
+        if before < 0 and after < 0 and not _busy_text(page):
+            # 개수를 못 읽는 환경: 배너 없으면 성공으로 본다(차선)
+            log("임시저장 클릭 완료(개수 확인 불가, 거부 배너 없음).")
+            return True
+        log(f"  저장 미확인(개수 {before}→{after}, busy={_busy_text(page)}) → 재시도")
+    log("저장 실패: 임시저장 개수가 늘지 않음(거짓 성공 방지 → error 처리).")
     return False
 
 
