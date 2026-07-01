@@ -14,12 +14,58 @@ import {
 const field = "rounded-lg border border-neutral-300 px-3 py-2 text-base w-full bg-white";
 const labelC = "text-sm font-medium text-neutral-700";
 
-// 폰 원본(3~4MB)을 1600px JPEG 로 축소 → 업로드 가볍게 + EXIF 회전 정규화.
-// (네이버도 최종 1600px 로 올리므로 화질 손실 없음)
+// 이미지를 디코드해 {width,height,draw} 로 반환.
+// createImageBitmap(HEIC 실패 가능) → <img> 폴백(Safari 는 HEIC 도 네이티브 디코드).
+type Decoded = {
+  w: number;
+  h: number;
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
+  done: () => void;
+};
+
+async function decode(file: File): Promise<Decoded> {
+  // 1) createImageBitmap (EXIF 회전 적용)
+  for (const opts of [{ imageOrientation: "from-image" as const }, undefined]) {
+    try {
+      const bm = await createImageBitmap(file, opts as ImageBitmapOptions);
+      return {
+        w: bm.width,
+        h: bm.height,
+        draw: (ctx, w, h) => ctx.drawImage(bm, 0, 0, w, h),
+        done: () => bm.close(),
+      };
+    } catch {
+      /* 다음 방법 시도 */
+    }
+  }
+  // 2) <img> 엘리먼트 폴백 (Safari HEIC 대응)
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error("decode"));
+      im.src = url;
+    });
+    return {
+      w: img.naturalWidth,
+      h: img.naturalHeight,
+      draw: (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h),
+      done: () => URL.revokeObjectURL(url),
+    };
+  } catch {
+    URL.revokeObjectURL(url);
+    throw new Error(`이미지를 읽지 못했어요 (형식: ${file.type || "알수없음"})`);
+  }
+}
+
+// 폰 원본(3~4MB, HEIC 포함)을 1600px JPEG 로 축소 → 업로드 가볍게 + 포맷/회전 정규화.
+// (네이버도 최종 1600px JPEG 로 올리므로 화질 손실 없음)
 async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<Blob> {
-  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-  let w = bitmap.width;
-  let h = bitmap.height;
+  const src = await decode(file);
+  let w = src.w;
+  let h = src.h;
+  if (!w || !h) throw new Error("이미지 크기를 읽지 못했어요");
   const longest = Math.max(w, h);
   if (longest > maxEdge) {
     const scale = maxEdge / longest;
@@ -31,8 +77,8 @@ async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<
   canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("canvas 미지원");
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
+  src.draw(ctx, w, h);
+  src.done();
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (bl) => (bl ? resolve(bl) : reject(new Error("이미지 변환 실패"))),
@@ -99,10 +145,15 @@ export default function NewPostPage() {
       // 2) 사진을 축소해 서명 URL 로 직접 업로드 (Vercel 함수 우회)
       for (let i = 0; i < uploads.length; i++) {
         setProgress(`사진 업로드 ${i + 1}/${uploads.length}`);
-        const blob = await resizeImage(photos[i]);
+        let blob: Blob;
+        try {
+          blob = await resizeImage(photos[i]);
+        } catch (re) {
+          throw new Error(`사진 ${i + 1} — ${re instanceof Error ? re.message : String(re)}`);
+        }
         const put = await fetch(uploads[i].url, {
           method: "PUT",
-          headers: { "content-type": "image/jpeg", "x-upsert": "true" },
+          headers: { "content-type": "image/jpeg" },
           body: blob,
         });
         if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
