@@ -142,19 +142,22 @@ export default function NewPostPage() {
         uploads: { path: string; url: string }[];
       };
 
-      // 2) 사진을 축소해 서명 URL 로 직접 업로드 (Vercel 함수 우회)
+      // 2) 사진을 축소해 서명 URL 로 직접 업로드 (Vercel 함수 우회).
+      //    변환 실패(브라우저가 HEIC 디코드 못하는 등) 시 원본 그대로 업로드 → 맥이 처리.
       for (let i = 0; i < uploads.length; i++) {
         setProgress(`사진 업로드 ${i + 1}/${uploads.length}`);
-        let blob: Blob;
+        let body: Blob = photos[i];
+        let contentType = photos[i].type || "application/octet-stream";
         try {
-          blob = await resizeImage(photos[i]);
-        } catch (re) {
-          throw new Error(`사진 ${i + 1} — ${re instanceof Error ? re.message : String(re)}`);
+          body = await resizeImage(photos[i]);
+          contentType = "image/jpeg";
+        } catch {
+          /* 원본 업로드로 폴백 */
         }
         const put = await fetch(uploads[i].url, {
           method: "PUT",
-          headers: { "content-type": "image/jpeg" },
-          body: blob,
+          headers: { "content-type": contentType },
+          body,
         });
         if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
       }

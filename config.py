@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# 아이폰 HEIC 사진을 PIL 로 열 수 있게 등록(설치돼 있을 때만). 폰에서 원본이 올라와도
+# image_analyzer/naver_blog_writer 가 처리 가능. 미설치면 조용히 통과(JPEG 만 지원).
+try:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
 # --- API 키 ---------------------------------------------------------------
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
