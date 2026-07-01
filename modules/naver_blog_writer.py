@@ -570,8 +570,13 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     _insert_divider(frame, log, "line5")
     body_on()  # 구분선 뒤 본문 스타일 재적용(검정 나눔스퀘어)
 
+    # 사진을 [사진N] 자리에 인라인으로 자동 배치한다.
+    # 예전 실패(둘째 사진부터 파일선택창이 안 뜸)는 _insert_image 가 업로드 완료를
+    # 장당 기다려 해결. 인라인 삽입 실패/본문 미참조 사진만 끝에 모아 올린다.
+    small_paths = _resize_for_upload(image_paths, log) if image_paths else []
     inserted = 0
-    used = set()  # 본문에 실제로 배치된 사진 번호
+    used = set()    # 본문에서 참조된 사진 번호
+    failed = set()  # 인라인 삽입 실패 → 끝에 재업로드 대상
     tokens = re.split(r"(\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
     for tok in tokens:
         mp = re.match(r"\[사진\s*(\d+)\]", tok)
@@ -580,12 +585,23 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             n = int(mp.group(1))
             if 1 <= n <= len(image_paths):
                 used.add(n)
-                # 사진은 본문 끝에 '한 번에' 업로드(인라인 다중삽입이 불안정).
-                # 위치는 [사진N] 마커로 남겨 사용자가 끌어다 배치한다.
-                kb.insert_text(f"[사진{n}]")
                 cap = captions.get(str(n)) or captions.get(n)
-                if cap:
-                    kb.press("Enter"); gray_on(); _type_lines(kb, cap); body_on()
+                try:
+                    # 현재 커서 위치([사진N] 자리)에 그 사진을 인라인 삽입.
+                    # 삽입 후 커서는 이미지 뒤에 오므로 문서 끝으로 이동시키지 않는다.
+                    _insert_image(frame, page, [small_paths[n - 1]], log)
+                    inserted += 1
+                    kb.press("Enter")  # 이미지 뒤 새 줄
+                    if cap:
+                        gray_on(); _type_lines(kb, cap); kb.press("Enter")
+                    body_on()  # 이어질 본문은 검정 나눔스퀘어로 복귀
+                except Exception as e:
+                    log(f"  사진{n} 인라인 삽입 실패({str(e)[:50]}) → 마커로 남기고 끝에 업로드")
+                    failed.add(n)
+                    body_on()
+                    kb.insert_text(f"[사진{n}]")
+                    if cap:
+                        kb.press("Enter"); gray_on(); _type_lines(kb, cap); body_on()
             else:
                 kb.insert_text(tok)
         elif mv:
@@ -602,20 +618,22 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 if i < len(body_lines) - 1:
                     kb.press("Enter")
 
-    # 모든 사진을 본문 끝에 '한 번에' 업로드한다(인라인 다중삽입이 불안정해서).
-    # [사진N] 마커는 본문에 남아 있어 위치 참고가 된다.
-    if image_paths:
+    # 본문에서 참조 안 됐거나 인라인 삽입에 실패한 사진만 끝에 모아 올린다.
+    leftover = [image_paths[n - 1] for n in range(1, len(image_paths) + 1)
+                if n not in used or n in failed]
+    if leftover:
         kb.press("Enter"); kb.press("Enter")
         _insert_divider(frame, log, "line5")
         body_on(); gray_on()
-        _type_lines(kb, "(사진을 아래에 한 번에 올렸습니다. 위 [사진N] 표시 위치로 끌어다 배치하세요.)")
+        _type_lines(kb, "(아래 사진은 자동 배치되지 않았어요. 원하는 위치로 끌어다 놓으세요.)")
         kb.press("Enter"); body_on()
         try:
-            inserted = _insert_all_images(frame, page, image_paths, log)
+            inserted += _insert_all_images(frame, page, leftover, log)
         except Exception as e:
-            log(f"사진 일괄 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
+            log(f"남은 사진 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
 
-    log(f"본문 입력 완료. 사진 {inserted}장 삽입, 소제목 {len(sub_set)}개 스타일.")
+    log(f"본문 입력 완료. 사진 {inserted}장 삽입(인라인 {len(used) - len(failed)}장), "
+        f"소제목 {len(sub_set)}개 스타일.")
     return True
 
 
