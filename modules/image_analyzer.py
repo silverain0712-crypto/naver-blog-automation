@@ -8,6 +8,9 @@ import config
 from modules.llm import call_json, prepare_image_block
 from prompts.post_structures import get_structure
 
+# 한 비전 요청에 넣을 최대 사진 수(많이 넣으면 요청이 커져 연결 끊김 위험).
+_BATCH = 8
+
 _PHOTO_SCHEMA = {
     "type": "object",
     "properties": {
@@ -73,24 +76,29 @@ def analyze_images(images: list[bytes], structure_key: str, photo_style: str) ->
         f"이 글의 유형은 '{structure['label']}'이고, 사진 노출 방식은 '{photo_style}'이다.\n"
         f"섹션별 사진 배치 기준: {structure['photo_guide']}\n\n"
         "각 사진을 위 기준에 맞춰 분석하라. "
+        "각 사진 블록 위의 [사진 N] 번호를 그 사진의 index 로 그대로 사용하라. "
         "거의 같은 장면(연사/비슷한 구도)은 같은 duplicate_group 번호로 묶어라(단독이면 0). "
-        "order_hint 는 글 흐름상 배치 순서를 1부터 매겨라(대표/도입부가 앞)."
+        "order_hint 는 글 흐름상 배치 순서를 매겨라(대표/도입부가 앞)."
     )
 
-    content: list = [{"type": "text", "text": instruction}]
-    for i, img in enumerate(images, start=1):
-        content.append({"type": "text", "text": f"[사진 {i}]"})
-        content.append(prepare_image_block(img))
-
-    result = call_json(
-        model=config.VISION_MODEL,
-        system=system,
-        content=content,
-        schema=_PHOTO_SCHEMA,
-        max_tokens=8000,
-    )
-
-    photos = result.get("photos", [])
+    # 사진이 많으면 한 요청에 다 넣으면 페이로드가 커져 연결이 끊긴다(Connection error).
+    # 8장씩 배치로 나눠 분석하고, 전역 번호(index)로 병합한다.
+    photos: list = []
+    for start in range(0, len(images), _BATCH):
+        chunk = images[start : start + _BATCH]
+        content: list = [{"type": "text", "text": instruction}]
+        for j, img in enumerate(chunk):
+            gi = start + j + 1  # 전역 1-based 사진 번호
+            content.append({"type": "text", "text": f"[사진 {gi}]"})
+            content.append(prepare_image_block(img))
+        result = call_json(
+            model=config.VISION_MODEL,
+            system=system,
+            content=content,
+            schema=_PHOTO_SCHEMA,
+            max_tokens=8000,
+        )
+        photos.extend(result.get("photos", []))
 
     # 중복 그룹별로 품질 점수 최고 1장만 keep, 나머지는 제외 후보
     best_in_group: dict[int, int] = {}  # group -> index of best

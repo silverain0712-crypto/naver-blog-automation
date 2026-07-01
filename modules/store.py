@@ -9,6 +9,7 @@ Supabase REST(PostgREST) + Storage 를 httpx 로 직접 호출(전용 클라이�
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import httpx
@@ -56,16 +57,23 @@ def _upload(path: str, data: bytes, content_type: str) -> str:
 
 
 def download(path: str) -> bytes:
-    """media 버킷에서 객체 내려받기."""
+    """media 버킷에서 객체 내려받기. 간헐 SSL/연결 오류는 재시도."""
     _require()
     url = f"{config.SUPABASE_URL}/storage/v1/object/{config.SUPABASE_BUCKET}/{path}"
     headers = {
         "apikey": config.SUPABASE_KEY,
         "Authorization": f"Bearer {config.SUPABASE_KEY}",
     }
-    r = httpx.get(url, headers=headers, timeout=_TIMEOUT)
-    r.raise_for_status()
-    return r.content
+    last = None
+    for attempt in range(4):
+        try:
+            r = httpx.get(url, headers=headers, timeout=_TIMEOUT)
+            r.raise_for_status()
+            return r.content
+        except Exception as e:
+            last = e
+            time.sleep(0.5 * (attempt + 1))
+    raise last
 
 
 # --- Drafts (DB) ----------------------------------------------------------

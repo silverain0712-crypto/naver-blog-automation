@@ -18,7 +18,13 @@ def get_client() -> anthropic.Anthropic:
         raise RuntimeError(
             "ANTHROPIC_API_KEY 가 설정되지 않았습니다. .env 파일을 확인해주세요."
         )
-    return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    # 큰 비전 요청/느린 본문 생성에서 간헐 연결 끊김(Connection error)에 견디도록
+    # 재시도·타임아웃을 넉넉히. (SDK 는 연결오류/429/5xx 를 자동 재시도)
+    return anthropic.Anthropic(
+        api_key=config.ANTHROPIC_API_KEY,
+        max_retries=4,
+        timeout=180.0,
+    )
 
 
 def prepare_image_block(image_bytes: bytes) -> dict:
