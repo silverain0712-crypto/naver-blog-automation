@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import time
 
 import anthropic
 from PIL import Image, ImageOps
@@ -11,6 +12,14 @@ import config
 
 # Claude 비전 권장 최대 변(픽셀). 너무 크면 토큰만 낭비되므로 리사이즈.
 _MAX_EDGE = 1568
+
+# 간헐 네트워크 끊김 시 재시도할 예외들(맥 네트워크가 큰 요청에서 종종 끊김).
+_RETRYABLE = (
+    anthropic.APIConnectionError,
+    anthropic.APITimeoutError,
+    anthropic.InternalServerError,
+    anthropic.RateLimitError,
+)
 
 
 def get_client() -> anthropic.Anthropic:
@@ -57,14 +66,26 @@ def call_json(
     schema: dict,
     max_tokens: int = 16000,
 ) -> dict:
-    """구조화 출력(output_config.format) 으로 JSON 을 강제하고 파싱해서 dict 로 돌려준다."""
+    """구조화 출력(output_config.format) 으로 JSON 을 강제하고 파싱해서 dict 로 돌려준다.
+
+    SDK 내부 재시도(max_retries) 위에, 더 긴 간격의 바깥 재시도를 둔다. 큰 요청 중
+    네트워크가 몇 초~수십 초 끊겨도 회복 시간을 주고 다시 시도해 전체 실패를 막는다.
+    """
     client = get_client()
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": content}],
-        output_config={"format": {"type": "json_schema", "schema": schema}},
-    )
-    text = next((b.text for b in response.content if b.type == "text"), "")
-    return json.loads(text)
+    last = None
+    for attempt in range(3):  # 총 3회(각 회마다 SDK 가 추가로 자동 재시도)
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": content}],
+                output_config={"format": {"type": "json_schema", "schema": schema}},
+            )
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            return json.loads(text)
+        except _RETRYABLE as e:
+            last = e
+            if attempt < 2:
+                time.sleep(8 * (attempt + 1))  # 8s, 16s — 네트워크 회복 대기
+    raise last

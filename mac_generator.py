@@ -15,8 +15,10 @@ import time
 import config
 from modules import store
 from modules import style_profiler, image_analyzer, post_generator
+from modules.llm import _RETRYABLE
 
 POLL_SECONDS = 15
+GEN_ATTEMPTS = 2  # 간헐 네트워크 끊김 대비, 생성 전체 재시도 횟수
 
 DEFAULT_FONT = "나눔스퀘어"
 DEFAULT_SIZE = 15
@@ -109,8 +111,17 @@ def main():
                 title_hint = ((row.get("data") or {}).get("request") or {}).get("memo", "")[:30]
                 print(f"\n[{datetime.datetime.now():%H:%M:%S}] 초안 생성 시작: {title_hint}")
                 try:
-                    generate(row)
-                    print("  ✅ 초안 완성 (draft_ready)")
+                    for attempt in range(1, GEN_ATTEMPTS + 1):
+                        try:
+                            generate(row)
+                            print("  ✅ 초안 완성 (draft_ready)")
+                            break
+                        except _RETRYABLE as e:
+                            if attempt < GEN_ATTEMPTS:
+                                print(f"  ↻ 네트워크 끊김({str(e)[:60]}) — {attempt}회차 재시도 대기…")
+                                time.sleep(20)
+                            else:
+                                raise
                 except Exception as e:
                     msg = str(e)[:300]
                     data = {**(row.get("data") or {}), "error": msg}
