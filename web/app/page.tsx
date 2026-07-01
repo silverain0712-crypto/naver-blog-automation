@@ -14,42 +14,114 @@ import {
 const field = "rounded-lg border border-neutral-300 px-3 py-2 text-base w-full bg-white";
 const labelC = "text-sm font-medium text-neutral-700";
 
+// 폰 원본(3~4MB)을 1600px JPEG 로 축소 → 업로드 가볍게 + EXIF 회전 정규화.
+// (네이버도 최종 1600px 로 올리므로 화질 손실 없음)
+async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<Blob> {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  let w = bitmap.width;
+  let h = bitmap.height;
+  const longest = Math.max(w, h);
+  if (longest > maxEdge) {
+    const scale = maxEdge / longest;
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas 미지원");
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  return await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (bl) => (bl ? resolve(bl) : reject(new Error("이미지 변환 실패"))),
+      "image/jpeg",
+      quality,
+    ),
+  );
+}
+
 export default function NewPostPage() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
   const [showOptional, setShowOptional] = useState(false);
-  const [photoCount, setPhotoCount] = useState(0);
+  const [photos, setPhotos] = useState<File[]>([]);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErr("");
-    const formEl = e.currentTarget;
-    const fd = new FormData(formEl);
+    const fd = new FormData(e.currentTarget);
+    const str = (k: string) => (fd.get(k) as string | null)?.trim() ?? "";
 
-    // 선택 입력들을 optional_fields JSON 으로 묶기
     const optional: Record<string, string> = {};
     for (const { key } of OPTIONAL_FIELDS) {
       const v = (fd.get(`opt_${key}`) as string | null)?.trim();
       if (v) optional[key] = v;
-      fd.delete(`opt_${key}`);
     }
-    fd.set("optional_fields", JSON.stringify(optional));
 
-    if (!(fd.get("memo") as string)?.trim() && photoCount === 0) {
+    if (!str("memo") && photos.length === 0) {
       setErr("메모나 사진 중 하나는 넣어주세요.");
       return;
     }
 
     setBusy(true);
-    const res = await fetch("/api/drafts", { method: "POST", body: fd });
-    setBusy(false);
-    if (res.ok) {
-      const { id } = await res.json();
+    try {
+      // 1) 메타 저장 + 서명 업로드 URL 발급
+      const meta = {
+        structure_key: str("structure_key"),
+        keyword: str("keyword"),
+        product_link: str("product_link"),
+        required_links: str("required_links"),
+        sponsor_type: str("sponsor_type"),
+        memo: str("memo"),
+        length: str("length"),
+        photo_style: str("photo_style"),
+        optional_fields: optional,
+        photoCount: photos.length,
+      };
+      const res = await fetch("/api/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(meta),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error ?? "생성 요청 실패");
+      }
+      const { id, uploads } = (await res.json()) as {
+        id: string;
+        uploads: { path: string; url: string }[];
+      };
+
+      // 2) 사진을 축소해 서명 URL 로 직접 업로드 (Vercel 함수 우회)
+      for (let i = 0; i < uploads.length; i++) {
+        setProgress(`사진 업로드 ${i + 1}/${uploads.length}`);
+        const blob = await resizeImage(photos[i]);
+        const put = await fetch(uploads[i].url, {
+          method: "PUT",
+          headers: { "content-type": "image/jpeg", "x-upsert": "true" },
+          body: blob,
+        });
+        if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
+      }
+
+      // 3) 업로드 끝나면 생성 시작 상태로 전환
+      if (uploads.length > 0) {
+        await fetch(`/api/drafts/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "generating" }),
+        });
+      }
+
       router.push(`/edit/${id}`);
-    } else {
-      const j = await res.json().catch(() => ({}));
-      setErr(j.error ?? "생성 요청 실패");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+      setProgress("");
     }
   }
 
@@ -131,14 +203,14 @@ export default function NewPostPage() {
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={labelC}>사진 {photoCount > 0 && `(${photoCount}장)`}</span>
+          <span className={labelC}>사진 {photos.length > 0 && `(${photos.length}장)`}</span>
           <input
             name="photos"
             type="file"
             accept="image/*"
             multiple
             className="text-sm"
-            onChange={(e) => setPhotoCount(e.target.files?.length ?? 0)}
+            onChange={(e) => setPhotos(e.target.files ? Array.from(e.target.files) : [])}
           />
         </label>
 
@@ -167,7 +239,7 @@ export default function NewPostPage() {
           disabled={busy}
           className="fixed inset-x-0 bottom-0 mx-auto max-w-lg bg-neutral-900 px-4 py-4 text-base font-semibold text-white disabled:opacity-50 sm:static sm:rounded-lg"
         >
-          {busy ? "요청 중…" : "초안 생성 🚀"}
+          {busy ? progress || "요청 중…" : "초안 생성 🚀"}
         </button>
       </form>
     </main>

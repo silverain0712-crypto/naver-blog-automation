@@ -46,7 +46,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     async function tick() {
       const d = await load();
       if (stop) return;
-      if (d && d.status === "generating") {
+      if (d && (d.status === "generating" || d.status === "uploading")) {
         timer = setTimeout(tick, 2000);
       }
     }
@@ -82,7 +82,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const hashtags: string[] = d.hashtags ?? [];
   const confirmNeeded: { item: string; note: string }[] = d.confirm_needed ?? [];
 
-  if (draft.status === "generating") {
+  if (draft.status === "generating" || draft.status === "uploading") {
     return (
       <main className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center gap-4 p-6 text-center">
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-neutral-200 border-t-neutral-800" />

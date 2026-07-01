@@ -64,11 +64,14 @@ export async function deleteDraft(id: string): Promise<void> {
   if (error) throw new Error(`deleteDraft: ${error.message}`);
 }
 
-// 사진 1장 업로드 → 저장 경로 반환 (store.py _upload 와 동일 규칙: {id}/{n}.jpg)
-export async function uploadImage(path: string, bytes: ArrayBuffer, contentType: string): Promise<string> {
-  const { error } = await supabase.storage
+// 브라우저가 Vercel 함수(4.5MB 제한)를 거치지 않고 Supabase 로 직접 PUT 하도록
+// 서명 업로드 URL 생성 → 절대 URL 반환. (사진 장수 제한 없이 안정적)
+export async function createSignedUpload(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
     .from(SUPABASE_BUCKET)
-    .upload(path, bytes, { contentType, upsert: true });
-  if (error) throw new Error(`uploadImage(${path}): ${error.message}`);
-  return path;
+    .createSignedUploadUrl(path);
+  if (error || !data) throw new Error(`createSignedUpload(${path}): ${error?.message}`);
+  let url = data.signedUrl;
+  if (url.startsWith("/")) url = `${SUPABASE_URL}${url}`;
+  return url;
 }
