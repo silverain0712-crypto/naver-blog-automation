@@ -268,8 +268,12 @@ def _set_bold(frame, on, log):
         log(f"볼드 설정 실패: {e}")
 
 
-def _insert_divider(frame, log, style="line5"):
-    """구분선 삽입(기본 사선 line5). 실패 시 기본 구분선."""
+def _insert_divider(frame, log, style="line6"):
+    """구분선 삽입. 실패 시 기본 구분선.
+
+    네이버 구분선 값(실측): line4=◇다이아, line5=•••점선, line6=/사선, line7=|세로.
+    비비 글은 사선(line6)을 쓴다.
+    """
     try:
         opt = frame.locator(
             "button.se-document-toolbar-select-option-button[data-name='horizontal-line']"
@@ -416,6 +420,10 @@ def _resize_for_upload(paths, log, max_side=1600, quality=85):
     tmpdir = Path(tempfile.mkdtemp(prefix="nbw_resize_"))
     for i, p in enumerate(paths):
         p = Path(p)
+        if p.suffix.lower() == ".gif":
+            # GIF 는 JPEG 로 변환하면 애니메이션이 죽으므로 원본 그대로 올린다.
+            out.append(str(p))
+            continue
         try:
             im = Image.open(p).convert("RGB")
             im.thumbnail((max_side, max_side))
@@ -554,20 +562,32 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     intro = lines[:g_idx] if g_idx is not None else []
     rest_text = "\n".join(lines[g_idx:]) if g_idx is not None else body
 
-    # 인트로: 고지문(회색) → 큰 제목(첫 비고지 줄) → 요약(나머지, 회색)
-    notice = [s.strip() for s in intro if s.strip() and any(k in s for k in _NOTICE_KEYS)]
-    content = [s.strip() for s in intro if s.strip() and not any(k in s for k in _NOTICE_KEYS)]
+    # 인트로 = 인사말 전까지. 고지문(회색) → 큰 제목(첫 블록, 나눔명조30 블랙)
+    #        → 메타 요약(다음 블록, 회색). 제목/요약은 '첫 빈 줄' 기준으로 가른다.
+    #        (예전엔 첫 줄 1줄만 제목이라 2줄 제목이 회색 요약으로 새어 제목이 없어 보였음)
+    notice = [l.strip() for l in intro if l.strip() and any(k in l for k in _NOTICE_KEYS)]
+    body_intro = [l for l in intro if not (l.strip() and any(k in l for k in _NOTICE_KEYS))]
+    title_lines, summary_lines, after_gap = [], [], False
+    for l in body_intro:
+        if not l.strip():
+            if title_lines:      # 제목 블록이 시작된 뒤의 빈 줄 → 이후는 요약
+                after_gap = True
+            continue
+        (summary_lines if after_gap else title_lines).append(l.strip())
+    # 빈 줄이 없어 안 갈렸으면 앞 1~2줄만 제목으로(나머지는 회색 요약)
+    if not summary_lines and len(title_lines) > 2:
+        title_lines, summary_lines = title_lines[:2], title_lines[2:]
     for s in notice:
         gray_on(); _type_lines(kb, s); kb.press("Enter"); kb.press("Enter")
-    if content:
-        title_on(); _type_lines(kb, content[0]); kb.press("Enter"); kb.press("Enter")
-        log("큰 제목(나눔명조24 볼드) 적용.")
-        if content[1:]:
-            gray_on(); _type_lines(kb, "\n".join(content[1:])); kb.press("Enter")
-            log("요약 블록(회색) 적용.")
+    if title_lines:
+        title_on(); _type_lines(kb, "\n".join(title_lines)); kb.press("Enter"); kb.press("Enter")
+        log(f"큰 제목(나눔명조{_TITLE_SIZE} 블랙) {len(title_lines)}줄 적용.")
+    if summary_lines:
+        gray_on(); _type_lines(kb, "\n".join(summary_lines)); kb.press("Enter")
+        log("메타 요약(회색) 적용.")
     # 구분선
     body_on()
-    _insert_divider(frame, log, "line5")
+    _insert_divider(frame, log, "line6")
     body_on()  # 구분선 뒤 본문 스타일 재적용(검정 나눔스퀘어)
 
     # 사진을 [사진N] 자리에 인라인으로 자동 배치한다.
@@ -623,7 +643,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 if n not in used or n in failed]
     if leftover:
         kb.press("Enter"); kb.press("Enter")
-        _insert_divider(frame, log, "line5")
+        _insert_divider(frame, log, "line6")
         body_on(); gray_on()
         _type_lines(kb, "(아래 사진은 자동 배치되지 않았어요. 원하는 위치로 끌어다 놓으세요.)")
         kb.press("Enter"); body_on()

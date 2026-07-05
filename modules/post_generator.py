@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import re
+
 import config
 from modules.image_analyzer import analysis_summary_for_writer
 from modules.llm import call_json
@@ -78,6 +80,49 @@ _POST_SCHEMA = {
     ],
     "additionalProperties": False,
 }
+
+
+_MEDIA_MARKER_RE = re.compile(r"\[(?:사진|영상)\s*\d+\]")
+
+_EXPAND_SCHEMA = {
+    "type": "object",
+    "properties": {"body": {"type": "string"}},
+    "required": ["body"],
+    "additionalProperties": False,
+}
+
+
+def _visible_len(body: str) -> int:
+    """[사진N]/[영상N] 자리표시를 뺀 실제 본문 글자수(공백 포함).
+
+    네이버에 올라가면 [사진N] 자리는 이미지가 되어 글자수에 안 들어가므로,
+    사용자가 보는 실제 글자수(공백 포함)와 맞추려면 마커를 빼고 센다.
+    """
+    return len(_MEDIA_MARKER_RE.sub("", body or ""))
+
+
+def _expand_body(system: str, current_body: str, target: int, actual: int) -> str:
+    """짧게 나온 본문을 목표 글자수 이상으로 늘린다(주제·사실·사진배치 유지)."""
+    instruction = (
+        f"아래는 네가 방금 쓴 블로그 초안 본문이다. 현재 공백 포함 약 {actual}자로 "
+        f"목표({target}자)에 크게 못 미친다. 같은 주제·사실·톤·구성을 유지하되, "
+        "각 섹션의 경험·과정·디테일·감상을 더 구체적으로 풀어써서 "
+        f"공백 포함 최소 {target}자 이상으로 늘려라.\n"
+        "- [사진N]·[영상N] 자리표시는 개수와 순서를 그대로 유지하라(지우거나 새로 만들지 마라).\n"
+        "- 기존 소제목은 그대로 두고 새 소제목은 만들지 마라.\n"
+        "- 없는 사실을 지어내지 말고, 같은 말 반복·의미 없는 늘리기도 금지.\n"
+        "- 불릿/기호 없이 짧은 문장을 줄바꿈으로 이어가는 비비 문체를 유지하라.\n"
+        "- body 만 다시 써서 반환하라(늘어난 전체 본문).\n\n"
+        f"[현재 초안 본문]\n{current_body}"
+    )
+    result = call_json(
+        model=config.WRITER_MODEL,
+        system=system,
+        content=[{"type": "text", "text": instruction}],
+        schema=_EXPAND_SCHEMA,
+        max_tokens=16000,
+    )
+    return result.get("body") or current_body
 
 
 def _format_optional(fields: dict) -> str:
@@ -235,10 +280,22 @@ def generate_post(
 사진/영상은 본문 흐름에 맞게 [사진N]/[영상N]으로 배치하라.
 확인되지 않은 정보는 지어내지 말고 confirm_needed 로 빼라."""
 
-    return call_json(
+    post = call_json(
         model=config.WRITER_MODEL,
         system=system,
         content=[{"type": "text", "text": user_text}],
         schema=_POST_SCHEMA,
         max_tokens=16000,
     )
+
+    # 목표 길이 미달이면 최대 2회까지 본문을 늘려 채운다(모델이 종종 짧게 씀).
+    for _ in range(2):
+        actual = _visible_len(post.get("body", ""))
+        if actual >= length:
+            break
+        expanded = _expand_body(system, post.get("body", ""), length, actual)
+        if _visible_len(expanded) <= actual:
+            break  # 더 이상 안 늘어나면 무한루프 방지
+        post["body"] = expanded
+
+    return post

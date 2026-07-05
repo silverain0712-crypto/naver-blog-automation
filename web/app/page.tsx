@@ -88,13 +88,64 @@ async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<
   );
 }
 
+type Pic = { file: File; url: string };
+
 export default function NewPostPage() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
   const [showOptional, setShowOptional] = useState(false);
-  const [photos, setPhotos] = useState<File[]>([]);
+  const [pics, setPics] = useState<Pic[]>([]);
+  const [learning, setLearning] = useState(false);
+  const [learnMsg, setLearnMsg] = useState("");
+
+  function addFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const next = Array.from(list).map((f) => ({ file: f, url: URL.createObjectURL(f) }));
+    setPics((prev) => [...prev, ...next]);
+  }
+  function removePic(i: number) {
+    setPics((prev) => {
+      URL.revokeObjectURL(prev[i].url);
+      return prev.filter((_, idx) => idx !== i);
+    });
+  }
+
+  // '발행 글 학습' — 맥에 신호를 보내고 style_sync 결과가 올 때까지 폴링.
+  async function learn() {
+    setLearning(true);
+    setLearnMsg("맥에 학습 요청 중…");
+    try {
+      const res = await fetch("/api/learn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error("학습 요청 실패");
+      const { id } = await res.json();
+      setLearnMsg("맥에서 발행 글을 수집하는 중… (맥 생성기가 켜져 있어야 해요)");
+      for (let t = 0; t < 30; t++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const r = await fetch(`/api/drafts/${id}`, { cache: "no-store" });
+        if (!r.ok) continue;
+        const { draft } = await r.json();
+        if (draft?.status === "learn_done") {
+          const result = draft.data?.result ?? {};
+          const added = result.added?.length ?? 0;
+          if (result.error) setLearnMsg(`학습 실패: ${result.error}`);
+          else if (added > 0) setLearnMsg(`📚 발행 글 ${added}편을 새로 학습했어요!`);
+          else setLearnMsg("이미 최신 상태예요 ✓ (새 발행 글 없음)");
+          setLearning(false);
+          return;
+        }
+      }
+      setLearnMsg("맥 응답이 없어요 — 맥에서 생성기(start_generator.sh)가 켜져 있는지 확인해주세요.");
+    } catch (e) {
+      setLearnMsg(e instanceof Error ? e.message : String(e));
+    }
+    setLearning(false);
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -108,14 +159,14 @@ export default function NewPostPage() {
       if (v) optional[key] = v;
     }
 
-    if (!str("memo") && photos.length === 0) {
+    if (!str("memo") && pics.length === 0) {
       setErr("메모나 사진 중 하나는 넣어주세요.");
       return;
     }
 
     setBusy(true);
     try {
-      // 1) 메타 저장 + 서명 업로드 URL 발급
+      // 1) 메타 저장 + 서명 업로드 URL 발급 (사진 MIME 도 함께 보내 GIF 는 .gif 로 저장)
       const meta = {
         structure_key: str("structure_key"),
         keyword: str("keyword"),
@@ -126,7 +177,8 @@ export default function NewPostPage() {
         length: str("length"),
         photo_style: str("photo_style"),
         optional_fields: optional,
-        photoCount: photos.length,
+        photoCount: pics.length,
+        photoMimes: pics.map((p) => p.file.type),
       };
       const res = await fetch("/api/drafts", {
         method: "POST",
@@ -142,17 +194,23 @@ export default function NewPostPage() {
         uploads: { path: string; url: string }[];
       };
 
-      // 2) 사진을 축소해 서명 URL 로 직접 업로드 (Vercel 함수 우회).
-      //    변환 실패(브라우저가 HEIC 디코드 못하는 등) 시 원본 그대로 업로드 → 맥이 처리.
+      // 2) 사진을 서명 URL 로 직접 업로드 (Vercel 함수 우회).
+      //    GIF: 애니메이션 유지 위해 원본 그대로. 그 외: 1600px JPEG 로 축소
+      //    (변환 실패 시 원본 폴백 → 맥이 처리).
       for (let i = 0; i < uploads.length; i++) {
         setProgress(`사진 업로드 ${i + 1}/${uploads.length}`);
-        let body: Blob = photos[i];
-        let contentType = photos[i].type || "application/octet-stream";
-        try {
-          body = await resizeImage(photos[i]);
-          contentType = "image/jpeg";
-        } catch {
-          /* 원본 업로드로 폴백 */
+        const file = pics[i].file;
+        let body: Blob = file;
+        let contentType = file.type || "application/octet-stream";
+        if (file.type === "image/gif") {
+          contentType = "image/gif";
+        } else {
+          try {
+            body = await resizeImage(file);
+            contentType = "image/jpeg";
+          } catch {
+            /* 원본 업로드로 폴백 */
+          }
         }
         const put = await fetch(uploads[i].url, {
           method: "PUT",
@@ -181,12 +239,26 @@ export default function NewPostPage() {
 
   return (
     <main className="mx-auto max-w-lg p-4 pb-24">
-      <header className="mb-4 flex items-center justify-between">
+      <header className="mb-3 flex items-center justify-between">
         <h1 className="text-lg font-semibold">새 글 쓰기 ✍️</h1>
-        <Link href="/list" className="text-sm text-blue-600">
-          내 글 →
-        </Link>
+        <div className="flex items-center gap-3 text-sm">
+          <button
+            type="button"
+            onClick={learn}
+            disabled={learning}
+            className="text-blue-600 disabled:opacity-50"
+          >
+            {learning ? "학습 중…" : "📚 발행글 학습"}
+          </button>
+          <Link href="/list" className="text-blue-600">
+            내 글 →
+          </Link>
+        </div>
       </header>
+
+      {learnMsg && (
+        <p className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">{learnMsg}</p>
+      )}
 
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="grid grid-cols-2 gap-3">
@@ -256,17 +328,51 @@ export default function NewPostPage() {
           />
         </label>
 
-        <label className="flex flex-col gap-1">
-          <span className={labelC}>사진 {photos.length > 0 && `(${photos.length}장)`}</span>
-          <input
-            name="photos"
-            type="file"
-            accept="image/*"
-            multiple
-            className="text-sm"
-            onChange={(e) => setPhotos(e.target.files ? Array.from(e.target.files) : [])}
-          />
-        </label>
+        <div className="flex flex-col gap-2">
+          <span className={labelC}>사진 {pics.length > 0 && `· ${pics.length}장`}</span>
+          <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 py-6 text-neutral-500 active:bg-neutral-100">
+            <span className="text-3xl">📷</span>
+            <span className="text-sm font-medium text-neutral-600">탭해서 사진 추가</span>
+            <span className="text-xs text-neutral-400">여러 장 · GIF 도 가능해요</span>
+            <input
+              type="file"
+              accept="image/*,image/gif"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addFiles(e.target.files);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+          {pics.length > 0 && (
+            <div className="grid grid-cols-4 gap-2">
+              {pics.map((p, i) => (
+                <div key={i} className="relative aspect-square">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.url}
+                    alt={`사진 ${i + 1}`}
+                    className="h-full w-full rounded-lg border border-neutral-200 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePic(i)}
+                    aria-label="사진 삭제"
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 text-xs leading-none text-white shadow"
+                  >
+                    ×
+                  </button>
+                  {p.file.type === "image/gif" && (
+                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] font-medium text-white">
+                      GIF
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <button
           type="button"

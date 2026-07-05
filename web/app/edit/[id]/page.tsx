@@ -81,6 +81,9 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const titleCandidates: string[] = d.title_candidates ?? [];
   const hashtags: string[] = d.hashtags ?? [];
   const confirmNeeded: { item: string; note: string }[] = d.confirm_needed ?? [];
+  const targetLen: number = d.request?.length ?? 0;
+  // [사진N]/[영상N] 자리표시는 실제 글자수에 안 들어가므로 빼고 센다(공백 포함).
+  const visibleLen = body.replace(/\[(?:사진|영상)\s*\d+\]/g, "").length;
 
   if (draft.status === "generating" || draft.status === "uploading") {
     return (
@@ -157,6 +160,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         }}
         className="min-h-[50vh] w-full rounded-lg border border-neutral-300 px-3 py-2 text-base leading-relaxed"
       />
+
+      <p className="mt-1 text-right text-xs text-neutral-400">
+        {visibleLen.toLocaleString()}자 (공백 포함, 사진자리 제외)
+        {targetLen > 0 && (
+          <span className={visibleLen >= targetLen ? "text-green-600" : "text-amber-600"}>
+            {" "}/ 목표 {targetLen.toLocaleString()}자
+          </span>
+        )}
+      </p>
 
       {confirmNeeded.length > 0 && (
         <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm">

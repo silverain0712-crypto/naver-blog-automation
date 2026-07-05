@@ -4,10 +4,11 @@ import { insertDraft, listDrafts, createSignedUpload } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-// GET /api/drafts  → 내 글 목록(최신순)
+// GET /api/drafts  → 내 글 목록(최신순). 학습 신호 행(learn/learn_done)은 글이 아니므로 제외.
 export async function GET() {
   try {
-    const drafts = await listDrafts();
+    const all = await listDrafts();
+    const drafts = all.filter((d) => d.status !== "learn" && d.status !== "learn_done");
     return NextResponse.json({ drafts });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -46,12 +47,16 @@ export async function POST(req: NextRequest) {
     };
 
     const photoCount = Math.max(0, Math.min(40, Number(b.photoCount) || 0));
+    // 사진별 MIME 타입(브라우저가 전달). GIF 는 애니메이션 유지 위해 원본(.gif)으로,
+    // 그 외는 브라우저에서 1600px JPEG 로 축소해 올리므로 .jpg 로 저장한다.
+    const photoMimes: string[] = Array.isArray(b.photoMimes) ? b.photoMimes.map(String) : [];
     const draft_id = randomUUID();
 
     const uploads: { path: string; url: string }[] = [];
     const imagePaths: string[] = [];
     for (let i = 1; i <= photoCount; i++) {
-      const path = `${draft_id}/${i}.jpg`;
+      const ext = photoMimes[i - 1] === "image/gif" ? "gif" : "jpg";
+      const path = `${draft_id}/${i}.${ext}`;
       uploads.push({ path, url: await createSignedUpload(path) });
       imagePaths.push(path);
     }

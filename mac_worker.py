@@ -26,16 +26,29 @@ def _build_job_dir(row: dict):
 
     img_names = []
     for i, path in enumerate(row.get("images") or [], start=1):
+        # 저장 경로의 확장자를 보존한다(GIF 는 애니메이션 유지 위해 .gif 로).
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else "jpg"
+        if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+            ext = "jpg"
+        fn = f"{i}.{ext}"
         try:
-            (job_dir / f"{i}.jpg").write_bytes(store.download(path))
-            img_names.append(f"{i}.jpg")
+            (job_dir / fn).write_bytes(store.download(path))
+            img_names.append(fn)
         except Exception as e:
             print(f"  사진 {i} 내려받기 실패: {e}")
+
+    # 해시태그(SEO 10개)를 본문 끝에 붙여 네이버 글에 실제로 들어가게 한다.
+    # (폰 편집 본문에는 없고 저장 시점에만 추가 → 매 글 빠짐없이 반영)
+    body = row.get("body", "")
+    hashtags = data.get("hashtags") or []
+    if hashtags:
+        tag_line = " ".join(f"#{h.lstrip('#')}" for h in hashtags)
+        body = body.rstrip() + "\n\n" + tag_line
 
     draft = {
         "blog_id": data.get("blog_id", "bbnation"),
         "title": row.get("title", ""),
-        "body": row.get("body", ""),
+        "body": body,
         "images": img_names,
         "videos": [],
         "captions": data.get("captions", {}),

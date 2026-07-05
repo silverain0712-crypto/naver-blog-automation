@@ -14,7 +14,7 @@ import time
 
 import config
 from modules import store
-from modules import style_profiler, image_analyzer, post_generator
+from modules import style_profiler, image_analyzer, post_generator, style_sync
 from modules.llm import _RETRYABLE
 
 POLL_SECONDS = 15
@@ -51,6 +51,17 @@ def generate(row: dict) -> None:
     photo_style = req.get("photo_style", config.PHOTO_STYLES[0])
 
     images = _download_images(row)
+
+    # 지속 학습(elevate): 생성 직전 최근 발행 글을 style_samples 로 수집한다.
+    # 새 글이 쌓이면 load_style_guide 가 프로필을 재분석하고 가장 최근 발행 글을
+    # few-shot 예시로 인용해, 쓸수록 비비 문체·분량에 가까워진다. 실패해도 생성은 계속.
+    blog_id = req.get("blog_id", "bbnation")
+    try:
+        res = style_sync.sync(blog_id, limit=5)
+        if res.get("added"):
+            print(f"  📚 발행 글 {len(res['added'])}편 새로 학습에 반영: {', '.join(res['added'])[:80]}")
+    except Exception as e:
+        print(f"  (발행 글 학습 건너뜀: {str(e)[:60]})")
 
     # app.py 와 동일 순서: 문체 가이드 → 사진 분석 → 초안 생성
     style_guide = style_profiler.load_style_guide()
@@ -98,6 +109,28 @@ def generate(row: dict) -> None:
     })
 
 
+def handle_learn_requests() -> None:
+    """폰 '발행 글 학습' 버튼(status='learn')을 처리 — 최근 발행 글을 style_samples 로 수집.
+
+    새 글이 추가되면 style_profiler 캐시가 fingerprint 변경으로 자동 무효화되어
+    다음 생성부터 재학습된다. 결과(added 편수)는 row 에 담아 폰이 보여준다.
+    """
+    for row in store.list_drafts("learn"):
+        req = (row.get("data") or {}).get("request") or {}
+        blog_id = req.get("blog_id", "bbnation")
+        print(f"[{datetime.datetime.now():%H:%M:%S}] 📚 발행 글 학습 요청: {blog_id}")
+        try:
+            res = style_sync.sync(blog_id, limit=10)
+            print(f"  ✅ 학습 완료: 새 글 {len(res['added'])}편 (기존 {res['skipped']}편)")
+        except Exception as e:
+            res = {"added": [], "skipped": 0, "errors": [], "error": str(e)[:200]}
+            print(f"  ⚠️ 학습 실패: {str(e)[:80]}")
+        store.update_draft(row["id"], {
+            "status": "learn_done",
+            "data": {**(row.get("data") or {}), "result": res},
+        })
+
+
 def main():
     if not store.enabled():
         print("Supabase 미설정(.env 확인). 종료합니다.")
@@ -106,6 +139,7 @@ def main():
     print(f"   {POLL_SECONDS}초마다 확인 / 종료: Ctrl+C")
     while True:
         try:
+            handle_learn_requests()
             rows = store.list_drafts("generating")
             for row in rows:
                 title_hint = ((row.get("data") or {}).get("request") or {}).get("memo", "")[:30]
