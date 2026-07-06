@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -98,12 +98,28 @@ export default function NewPostPage() {
   const [showOptional, setShowOptional] = useState(false);
   const [pics, setPics] = useState<Pic[]>([]);
   const [guideFile, setGuideFile] = useState<File | null>(null);
+  const [dragPhotos, setDragPhotos] = useState(false);
+  const [dragGuide, setDragGuide] = useState(false);
   const [learning, setLearning] = useState(false);
   const [learnMsg, setLearnMsg] = useState("");
 
+  // PC 에서 드롭존 밖에 파일을 떨궜을 때 브라우저가 파일을 열어버리는 것 방지.
+  useEffect(() => {
+    const prevent = (e: DragEvent) => e.preventDefault();
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
+
+  // 사진 추가(입력/드롭 공용) — 이미지 파일만 받는다.
   function addFiles(list: FileList | null) {
     if (!list || list.length === 0) return;
-    const next = Array.from(list).map((f) => ({ file: f, url: URL.createObjectURL(f) }));
+    const imgs = Array.from(list).filter((f) => f.type.startsWith("image/"));
+    if (imgs.length === 0) return;
+    const next = imgs.map((f) => ({ file: f, url: URL.createObjectURL(f) }));
     setPics((prev) => [...prev, ...next]);
   }
   function removePic(i: number) {
@@ -344,9 +360,25 @@ export default function NewPostPage() {
 
         <div className="flex flex-col gap-2">
           <span className={labelC}>사진 {pics.length > 0 && `· ${pics.length}장`}</span>
-          <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 py-6 text-neutral-500 active:bg-neutral-100">
+          <label
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragPhotos(true);
+            }}
+            onDragLeave={() => setDragPhotos(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragPhotos(false);
+              addFiles(e.dataTransfer.files);
+            }}
+            className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed py-6 transition-colors ${
+              dragPhotos
+                ? "border-blue-400 bg-blue-50 text-blue-500"
+                : "border-neutral-300 bg-neutral-50 text-neutral-500 active:bg-neutral-100"
+            }`}
+          >
             <span className="text-3xl">📷</span>
-            <span className="text-sm font-medium text-neutral-600">탭해서 사진 추가</span>
+            <span className="text-sm font-medium text-neutral-600">탭하거나 끌어다 놓기</span>
             <span className="text-xs text-neutral-400">여러 장 · GIF 도 가능해요</span>
             <input
               type="file"
@@ -391,11 +423,30 @@ export default function NewPostPage() {
         <div className="flex flex-col gap-2">
           <span className={labelC}>협찬 가이드라인 파일 (선택)</span>
           {!guideFile ? (
-            <label className="flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-3 py-4 text-neutral-500 active:bg-neutral-100">
+            <label
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragGuide(true);
+              }}
+              onDragLeave={() => setDragGuide(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragGuide(false);
+                const f = e.dataTransfer.files?.[0];
+                if (f) setGuideFile(f);
+              }}
+              className={`flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-3 py-4 transition-colors ${
+                dragGuide
+                  ? "border-blue-400 bg-blue-50 text-blue-500"
+                  : "border-neutral-300 bg-neutral-50 text-neutral-500 active:bg-neutral-100"
+              }`}
+            >
               <span className="text-xl">📋</span>
               <span className="flex flex-col">
                 <span className="text-sm font-medium text-neutral-600">가이드 파일 첨부</span>
-                <span className="text-xs text-neutral-400">엑셀·PDF·워드·이미지 — 지침대로 글을 써요</span>
+                <span className="text-xs text-neutral-400">
+                  엑셀·PDF·워드·이미지 — 탭하거나 끌어다 놓기
+                </span>
               </span>
               <input
                 type="file"
