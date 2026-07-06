@@ -14,7 +14,7 @@ import time
 
 import config
 from modules import store
-from modules import style_profiler, image_analyzer, post_generator, style_sync
+from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser
 from modules.llm import _RETRYABLE
 
 POLL_SECONDS = 15
@@ -63,6 +63,17 @@ def generate(row: dict) -> None:
     except Exception as e:
         print(f"  (발행 글 학습 건너뜀: {str(e)[:60]})")
 
+    # 협찬 가이드라인 파일(있으면) 다운로드+텍스트 추출 → 생성 프롬프트에 주입
+    guideline_text = ""
+    gpath = req.get("guideline_path")
+    if gpath:
+        try:
+            gbytes = store.download(gpath)
+            guideline_text = guideline_parser.extract_text(gbytes, req.get("guideline_name", gpath))
+            print(f"  📋 협찬 가이드 반영: {len(guideline_text)}자 추출")
+        except Exception as e:
+            print(f"  (협찬 가이드 파싱 실패, 무시하고 진행: {str(e)[:60]})")
+
     # app.py 와 동일 순서: 문체 가이드 → 사진 분석 → 초안 생성
     style_guide = style_profiler.load_style_guide()
     analysis = image_analyzer.analyze_images(images, structure_key, photo_style)
@@ -80,6 +91,7 @@ def generate(row: dict) -> None:
         image_analysis=analysis,
         video_count=0,
         video_desc="",
+        guideline=guideline_text,
     )
 
     titles = post.get("title_candidates") or ["(제목 미정)"]

@@ -2,3 +2,7 @@
 # 설치: pip install -r requirements-mac.txt  그리고  python3 -m playwright install chromium
 -r requirements.txt
 playwright>=1.40
+# 협찬 가이드라인 파일 파싱(엑셀/PDF/워드)
+openpyxl>=3.1
+pypdf>=4.0
+python-docx>=1.1

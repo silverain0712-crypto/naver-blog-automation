@@ -97,6 +97,7 @@ export default function NewPostPage() {
   const [err, setErr] = useState("");
   const [showOptional, setShowOptional] = useState(false);
   const [pics, setPics] = useState<Pic[]>([]);
+  const [guideFile, setGuideFile] = useState<File | null>(null);
   const [learning, setLearning] = useState(false);
   const [learnMsg, setLearnMsg] = useState("");
 
@@ -179,6 +180,7 @@ export default function NewPostPage() {
         optional_fields: optional,
         photoCount: pics.length,
         photoMimes: pics.map((p) => p.file.type),
+        guidelineName: guideFile?.name ?? "",
       };
       const res = await fetch("/api/drafts", {
         method: "POST",
@@ -189,9 +191,10 @@ export default function NewPostPage() {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error ?? "생성 요청 실패");
       }
-      const { id, uploads } = (await res.json()) as {
+      const { id, uploads, guidelineUpload } = (await res.json()) as {
         id: string;
         uploads: { path: string; url: string }[];
+        guidelineUpload: { path: string; url: string } | null;
       };
 
       // 2) 사진을 서명 URL 로 직접 업로드 (Vercel 함수 우회).
@@ -220,8 +223,19 @@ export default function NewPostPage() {
         if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
       }
 
+      // 2-b) 협찬 가이드라인 파일 업로드(원본 그대로)
+      if (guidelineUpload && guideFile) {
+        setProgress("가이드라인 업로드 중…");
+        const put = await fetch(guidelineUpload.url, {
+          method: "PUT",
+          headers: { "content-type": guideFile.type || "application/octet-stream" },
+          body: guideFile,
+        });
+        if (!put.ok) throw new Error(`가이드라인 업로드 실패 (${put.status})`);
+      }
+
       // 3) 업로드 끝나면 생성 시작 상태로 전환
-      if (uploads.length > 0) {
+      if (uploads.length > 0 || guidelineUpload) {
         await fetch(`/api/drafts/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -370,6 +384,39 @@ export default function NewPostPage() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className={labelC}>협찬 가이드라인 파일 (선택)</span>
+          {!guideFile ? (
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-3 py-4 text-neutral-500 active:bg-neutral-100">
+              <span className="text-xl">📋</span>
+              <span className="flex flex-col">
+                <span className="text-sm font-medium text-neutral-600">가이드 파일 첨부</span>
+                <span className="text-xs text-neutral-400">엑셀·PDF·워드·이미지 — 지침대로 글을 써요</span>
+              </span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.xlsm,.pdf,.docx,.csv,.txt,image/*"
+                className="hidden"
+                onChange={(e) => setGuideFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          ) : (
+            <div className="flex items-center justify-between rounded-xl border border-neutral-300 bg-white px-3 py-3">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="text-lg">📋</span>
+                <span className="truncate text-sm text-neutral-700">{guideFile.name}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setGuideFile(null)}
+                className="ml-2 shrink-0 rounded-lg border border-neutral-300 px-2 py-1 text-xs text-neutral-600"
+              >
+                제거
+              </button>
             </div>
           )}
         </div>

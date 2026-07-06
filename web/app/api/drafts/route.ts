@@ -61,17 +61,33 @@ export async function POST(req: NextRequest) {
       imagePaths.push(path);
     }
 
+    // 협찬 가이드라인 파일(xlsx/pdf/docx/이미지 등) — 있으면 서명 URL 발급.
+    // 원본 그대로 올려 맥 mac_generator 가 파싱해 생성 프롬프트에 반영한다.
+    const guidelineName = typeof b.guidelineName === "string" ? b.guidelineName.trim() : "";
+    let guidelineUpload: { path: string; url: string } | null = null;
+    let guideline_path = "";
+    if (guidelineName) {
+      const gext = guidelineName.includes(".")
+        ? guidelineName.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "")
+        : "bin";
+      guideline_path = `${draft_id}/guideline.${gext || "bin"}`;
+      guidelineUpload = { path: guideline_path, url: await createSignedUpload(guideline_path) };
+    }
+
+    const needUpload = photoCount > 0 || !!guidelineUpload;
     await insertDraft({
       id: draft_id,
-      status: photoCount > 0 ? "uploading" : "generating",
+      status: needUpload ? "uploading" : "generating",
       title: "",
       body: "",
-      data: { request },
+      data: {
+        request: { ...request, guideline_path, guideline_name: guidelineName },
+      },
       images: imagePaths,
       thumbnail: null,
     });
 
-    return NextResponse.json({ id: draft_id, uploads });
+    return NextResponse.json({ id: draft_id, uploads, guidelineUpload });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

@@ -82,6 +82,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const hashtags: string[] = d.hashtags ?? [];
   const confirmNeeded: { item: string; note: string }[] = d.confirm_needed ?? [];
   const targetLen: number = d.request?.length ?? 0;
+  const guidelineName: string = d.request?.guideline_name ?? "";
   // [사진N]/[영상N] 자리표시는 실제 글자수에 안 들어가므로 빼고 센다(공백 포함).
   const visibleLen = body.replace(/\[(?:사진|영상)\s*\d+\]/g, "").length;
 
@@ -124,6 +125,12 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
           {draft.images?.length ? ` · 사진 ${draft.images.length}장` : ""}
         </span>
       </header>
+
+      {guidelineName && (
+        <p className="mb-2 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700">
+          📋 협찬 가이드 반영됨: {guidelineName}
+        </p>
+      )}
 
       {titleCandidates.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1">

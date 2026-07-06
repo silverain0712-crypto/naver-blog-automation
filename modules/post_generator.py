@@ -163,11 +163,13 @@ def generate_post(
     image_analysis: dict,
     video_count: int = 0,
     video_desc: str = "",
+    guideline: str = "",
 ):
     structure = get_structure(structure_key)
     required_links = [l.strip() for l in (required_links or []) if l.strip()]
     keyword = (keyword or "").strip()
     product_link = (product_link or "").strip()
+    guideline = (guideline or "").strip()
 
     # 키워드 유무에 따른 SEO 지침
     if keyword:
@@ -220,6 +222,26 @@ def generate_post(
         "확실치 않으면 사진/메모에서 보이는 표기를 그대로 쓰고, 전혀 알 수 없을 때만 일반명사를 쓴다."
     )
 
+    # 협찬 가이드라인(광고주 제공 파일에서 추출) — 있으면 최우선 준수 규칙으로 주입
+    if guideline:
+        guideline_rule = (
+            "\n\n[협찬 가이드라인 — 최우선 준수. 이 지침이 아래 기본값·SEO 규칙과 충돌하면 가이드라인을 따른다]\n"
+            "아래는 광고주가 제공한 공식 가이드라인이다. 다음을 반드시 지켜라:\n"
+            "- 가이드의 '필수 키워드'는 제목과 본문에 그대로 넣고, 지정 횟수(명시 없으면 각 3회 이상) 반복하라.\n"
+            "- 가이드에 '필수 해시태그' 목록이 있으면 그 해시태그들을 hashtags 에 그대로(#기호 없이 단어만) 넣어라. "
+            "이 경우 10개 제한을 무시하고 가이드의 필수 목록을 우선한다.\n"
+            "- 제목 글자수(예: 띄어쓰기 제외 30자 이내)·본문 글자수 등 수치 제한이 있으면 그 제한을 반드시 지켜라.\n"
+            "- '공정위 문구/쇼핑커넥트 문구를 최상단에' 요구하면 본문 맨 위 첫 줄(별도 문단)에 그 문구를 넣어라.\n"
+            "- 금지사항(타사 제품 노출 금지, 타사 비교 금지 등)을 절대 어기지 마라.\n"
+            "- 가이드가 지정한 '필수 삽입 사진/영상'이 사진 분석 결과에 안 보이면 confirm_needed 로 사용자에게 알려라.\n"
+            "- 제품 특장점·소구 포인트는 광고처럼 복붙하지 말고 비비의 실사용 경험 톤으로 자연스럽게 녹여라.\n"
+            "- 가이드가 요구하는 삽입 링크(쇼핑커넥트 등)가 있으면 본문에 자연스럽게 배치하라(URL 은 사용자가 확인 필요 시 confirm_needed).\n"
+            "\n[가이드라인 원문]\n"
+            + guideline
+        )
+    else:
+        guideline_rule = ""
+
     system = (
         STYLE_RULES
         + "\n\n"
@@ -228,6 +250,7 @@ def generate_post(
         + sponsor_instruction(sponsor_type)
         + "\n\n"
         + brand_rule
+        + guideline_rule
         + "\n\n[SEO]\n"
         + keyword_rule
         + "\n\n"
@@ -239,8 +262,9 @@ def generate_post(
         "- title_candidates: 서로 다른 각도의 제목 3개. 네이버 SEO 최적화 — 핵심 키워드를 "
         "앞쪽에 배치하고, 검색 의도(지역·제품·후기 등)를 담아 자연스럽게. 28~35자 권장, "
         "낚시성·과장 금지.\n"
-        "- hashtags: 글 주제와 관련되고 네이버 SEO 를 고려한 해시태그 정확히 10개. 기호(#) 없이 "
-        "단어만, 핵심 키워드 + 연관 검색어 조합으로. 너무 일반적이거나 서로 중복되지 않게.\n"
+        "- hashtags: 글 주제와 관련되고 네이버 SEO 를 고려한 해시태그. 기호(#) 없이 단어만, 핵심 키워드 "
+        "+ 연관 검색어 조합으로. 기본은 10개, 단 협찬 가이드라인에 '필수 해시태그' 목록이 있으면 그 목록을 "
+        "그대로(개수 제한 없이) 우선해 넣어라. 서로 중복되거나 너무 일반적이지 않게.\n"
         "- thumbnail_title: 썸네일에 넣을 짧은 제목을 1~2줄(배열)로. 각 줄은 10자 안팎으로 "
         "짧고 굵게. 예: ['서울형 키즈카페 신당점'] 또는 ['애착인형 언제부터?','돌 아기 시기와 종류'].\n"
         "- subheadings: 본문에 사용한 소제목들을 배열로 나열. ●·불릿·기호 없이 글자만"
