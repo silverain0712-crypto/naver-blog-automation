@@ -294,6 +294,90 @@ def _insert_divider(frame, log, style="line6"):
         log(f"구분선 삽입 실패: {e}")
 
 
+def _parse_table_block(inner: str) -> list[list[str]]:
+    """[표] 블록 내부 텍스트 → 행(list) 목록. 각 줄은 '|' 로 칸 구분, 구분선(---)은 건너뜀."""
+    rows = []
+    for line in inner.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        # 마크다운 헤더 구분선(| --- | --- |) 무시
+        if re.fullmatch(r"[|\s:\-]+", line):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def _normalize_table_rows(rows: list[list[str]]) -> list[list[str]]:
+    """네이버 기본 표(3열)에 맞춰 각 행을 정확히 3칸으로. 모자라면 빈칸, 넘치면 마지막 칸에 합침."""
+    norm = []
+    for r in rows:
+        cells = [str(c).strip() for c in r]
+        if len(cells) < 3:
+            cells += [""] * (3 - len(cells))
+        elif len(cells) > 3:
+            cells = cells[:2] + [" ".join(cells[2:])]
+        norm.append(cells)
+    return norm
+
+
+def _insert_table(frame, page, rows, log):
+    """본문 현재 위치에 네이버 표를 삽입하고 채운다(3열 고정, 행은 필요한 만큼 추가).
+
+    실측 동작: '표 추가' 버튼은 기본 3x3 표를 커서 위치에 넣는다. Tab 셀이동은 안 되므로
+    셀을 하나씩 클릭해 입력한다. 표가 문서 마지막 블록이면 뒤 문단이 없어 이어지는 본문이
+    셀로 새어 들어가므로, 삽입 전에 '샌드위치'(Enter로 뒤 빈 문단 확보 → ArrowUp)로 자리를 만든다.
+    """
+    kb = page.keyboard
+    norm = _normalize_table_rows(rows)
+    R = len(norm)
+    if R == 0:
+        return
+    # 샌드위치: 표 뒤에 남을 빈 문단을 먼저 만들고 그 위로 올라가 표를 넣는다.
+    kb.press("Enter"); time.sleep(0.15)
+    kb.press("Enter"); time.sleep(0.15)
+    kb.press("ArrowUp"); time.sleep(0.15)
+    frame.locator("button.se-table-toolbar-button").first.click(timeout=4000)
+    time.sleep(1.0)
+    # 행 맞추기(기본 3행 → R행): 행 컨트롤바의 '행 추가' 버튼 클릭
+    cur = 3
+    add_btn = "ul.se-cell-controlbar-row li.se-cell-controlbar-item button.se-cell-add-button"
+    guard = 0
+    while cur < R and guard < 40:
+        guard += 1
+        try:
+            frame.locator(add_btn).last.click(timeout=2000)
+            cur += 1
+            time.sleep(0.2)
+        except Exception as e:
+            log(f"  표 행 추가 실패: {str(e)[:50]}")
+            break
+    # 셀 채우기(td 순서 = 행 우선). 셀은 개별 클릭 후 입력.
+    cells = frame.locator(".se-component.se-table td .se-text-paragraph")
+    total = cells.count()
+    for i, row in enumerate(norm):
+        for c in range(3):
+            idx = i * 3 + c
+            if idx >= total:
+                break
+            if not row[c]:
+                continue
+            try:
+                cells.nth(idx).click(timeout=2000)
+                time.sleep(0.08)
+                kb.insert_text(row[c])
+            except Exception as e:
+                log(f"  표 셀({i},{c}) 입력 실패: {str(e)[:40]}")
+    # 표 밖(뒤에 만든 빈 문단)으로 커서 이동 — 실제 클릭이어야 에디터 커서가 옮겨진다.
+    try:
+        frame.locator(".se-component.se-text .se-text-paragraph").last.click(timeout=2000)
+    except Exception as e:
+        log(f"  표 뒤 문단 이동 실패: {str(e)[:40]}")
+    log(f"표 삽입: {R}행 3열")
+
+
 def _ensure_strike_off(frame, log):
     """취소선이 켜져 있으면 끈다(프로필에 켜진 채 남아 글에 적용되는 문제 방지)."""
     try:
@@ -597,11 +681,23 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     inserted = 0
     used = set()    # 본문에서 참조된 사진 번호
     failed = set()  # 인라인 삽입 실패 → 끝에 재업로드 대상
-    tokens = re.split(r"(\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
+    tokens = re.split(r"(\[표\][\s\S]*?\[/표\]|\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
     for tok in tokens:
+        mt = re.match(r"\[표\]([\s\S]*?)\[/표\]", tok)
         mp = re.match(r"\[사진\s*(\d+)\]", tok)
         mv = re.match(r"\[영상\s*(\d+)\]", tok)
-        if mp:
+        if mt:
+            table_rows = _parse_table_block(mt.group(1))
+            if table_rows:
+                try:
+                    _insert_table(frame, page, table_rows, log)
+                    body_on()  # 표 뒤 본문 스타일 복귀
+                except Exception as e:
+                    log(f"  표 삽입 실패({str(e)[:50]}) → 텍스트로 대체")
+                    body_on()
+                    for r in _normalize_table_rows(table_rows):
+                        _type_lines(kb, "  ".join(c for c in r if c)); kb.press("Enter")
+        elif mp:
             n = int(mp.group(1))
             if 1 <= n <= len(image_paths):
                 used.add(n)
