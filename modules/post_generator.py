@@ -105,13 +105,19 @@ def _visible_len(body: str) -> int:
     return len(t.replace("\n", "").replace("\r", ""))
 
 
+def _content_len(body: str) -> int:
+    """공백 제외 글자수(사용자 목표 기준). [사진N]/[영상N] 자리표시와 모든 공백을 뺀 순수 글자 수."""
+    t = _MEDIA_MARKER_RE.sub("", body or "")
+    return len("".join(t.split()))
+
+
 def _expand_body(system: str, current_body: str, target: int, actual: int) -> str:
     """짧게 나온 본문을 목표 글자수 이상으로 늘린다(주제·사실·사진배치 유지)."""
     instruction = (
-        f"아래는 네가 방금 쓴 블로그 초안 본문이다. 현재 공백 포함 약 {actual}자로 "
+        f"아래는 네가 방금 쓴 블로그 초안 본문이다. 현재 공백 제외 약 {actual}자로 "
         f"목표({target}자)에 크게 못 미친다. 같은 주제·사실·톤·구성을 유지하되, "
         "각 섹션의 경험·과정·디테일·감상을 더 구체적으로 풀어써서 "
-        f"공백 포함 최소 {target}자 이상으로 늘려라.\n"
+        f"공백 제외 최소 {target}자 이상으로 늘려라.\n"
         "- [사진N]·[영상N] 자리표시는 개수와 순서를 그대로 유지하라(지우거나 새로 만들지 마라).\n"
         "- 기존 소제목은 그대로 두고 새 소제목은 만들지 마라.\n"
         "- 없는 사실을 지어내지 말고, 같은 말 반복·의미 없는 늘리기도 금지.\n"
@@ -168,12 +174,14 @@ def generate_post(
     video_count: int = 0,
     video_desc: str = "",
     guideline: str = "",
+    research_notes: str = "",
 ):
     structure = get_structure(structure_key)
     required_links = [l.strip() for l in (required_links or []) if l.strip()]
     keyword = (keyword or "").strip()
     product_link = (product_link or "").strip()
     guideline = (guideline or "").strip()
+    research_notes = (research_notes or "").strip()
 
     # 키워드 유무에 따른 SEO 지침
     if keyword:
@@ -248,6 +256,19 @@ def generate_post(
     else:
         guideline_rule = ""
 
+    # 웹 리서치로 확인한 사실 — 있으면 본문에 정확히 녹이도록 주입(정보 밀도↑, GPT 대비 약점 보완)
+    if research_notes:
+        research_rule = (
+            "\n\n[웹 리서치로 확인한 사실 — 본문에 정확히 활용하라]\n"
+            "아래는 이 글 주제로 웹에서 확인한 사실 정보다. 독자에게 실질적 도움이 되도록 "
+            "본문의 알맞은 섹션에 자연스럽게 녹여라(절차·준비물·수치·공식 창구 등). "
+            "단 (1) 여기 없는 사실을 지어내지 말고, (2) 비비의 실경험 톤으로 풀되 정보 자체는 정확히, "
+            "(3) 개인 경험(메모)과 충돌하면 메모를 우선하고 일반 정보는 '보통은/일반적으로' 로 구분해 써라.\n"
+            + research_notes
+        )
+    else:
+        research_rule = ""
+
     system = (
         STYLE_RULES
         + "\n\n"
@@ -261,9 +282,14 @@ def generate_post(
         + "\n\n"
         + brand_rule
         + guideline_rule
-        + "\n\n[SEO]\n"
+        + research_rule
+        + "\n\n[SEO — 네이버 상위 노출 최적화. SEO 전문가+블로그 컨설턴트로서 반드시 지켜라]\n"
         + keyword_rule
-        + "\n\n"
+        + "\n- 제목: 메인 키워드를 맨 앞에 두고, 검색 의도 + 호기심 + 명확한 혜택을 담아라(낚시·과장 금지).\n"
+        "- 첫 문단(도입부)에 핵심 키워드를 3회 이상 자연스럽게 넣어라(어색한 반복은 금지).\n"
+        "- 소제목(H2/H3 격)에 키워드를 자연스럽게 포함하고, 리스트·정리 문단·강조로 가독성을 높여라.\n"
+        "- 연관 검색어(관련 키워드)를 본문 전체에 20개 이상 자연스럽게 녹여라(맥락 없는 나열·키워드 스터핑 금지).\n"
+        "- 같은 키워드를 20회 이상 반복하지 마라(과최적화는 오히려 감점). 동의어·연관어로 변주하라.\n\n"
         + link_rule
         + "\n\n"
         + video_rule
@@ -280,7 +306,8 @@ def generate_post(
         "- subheadings: 본문에 사용한 소제목들을 배열로 나열. ●·불릿·기호 없이 글자만"
         "(본문의 소제목과 글자까지 똑같이). 단 '루틴·순서·단계' 섹션의 소제목은 "
         "본문에 쓴 그대로(예: '1. 돌돌이로 침대 청소') 번호를 포함해 넣어라.\n"
-        "- meta_description: 검색 노출용 2~3문장 요약.\n"
+        "- meta_description: 검색 노출·클릭 유도용 요약, **150자 이내**. 메인 키워드를 앞쪽에 포함하고 "
+        "클릭하고 싶게 혜택/궁금증을 담아라. 이 문장이 제목 아래 회색 요약(본문 첫 줄)로 들어간다.\n"
         "- body: 소제목(간결한 문장형) + 본문. 사진 자리는 [사진N], 영상 자리는 [영상N] "
         "형식으로 표기. 사용할 사진/영상은 모두 한 번씩 본문에 배치.\n"
         "- photo_placement / video_placement: 각 사진·영상의 섹션과 캡션/설명.\n"
@@ -297,7 +324,7 @@ def generate_post(
 {section_list}
 
 [핵심 키워드] {keyword or '(미입력 — 직접 제안)'}
-[목표 글 길이 — 반드시 지킬 것] 본문(body)은 공백 포함 **최소 {length}자 이상**. 비비 실제 글은 1500~2500자다. 절대 미달하지 마라. 분량이 모자라면 (1) 소제목을 더 만들고 (2) 각 섹션의 경험·과정·디테일·감상을 더 구체적으로 풀어써서 채운다. 단, 같은 말 반복이나 의미 없는 늘리기는 금지하고, 없는 사실을 지어내지도 마라. 체크리스트나 정보 나열도 불릿 없이 짧은 문장을 줄바꿈해서 쓴다.
+[목표 글 길이 — 반드시 지킬 것] 본문(body)은 **공백 제외 한글 최소 {length}자 이상**(권장 1500~2000자). 절대 미달하지 마라. 분량이 모자라면 (1) 소제목을 더 만들고 (2) 각 섹션의 경험·과정·디테일·감상, 그리고 웹 리서치로 확인한 사실(절차·준비물·수치)을 더 구체적으로 풀어써서 채운다. 단, 같은 말 반복이나 의미 없는 늘리기는 금지하고, 없는 사실을 지어내지도 마라. 체크리스트나 정보 나열도 불릿 없이 짧은 문장을 줄바꿈해서 쓴다.
 [사진 노출 방식] {photo_style}
 [첨부 영상 수] {video_count}
 
@@ -322,13 +349,13 @@ def generate_post(
         max_tokens=16000,
     )
 
-    # 목표 길이 미달이면 최대 3회까지 본문을 늘려 채운다(모델이 종종 짧게 씀).
+    # 목표 길이(공백 제외) 미달이면 최대 3회까지 본문을 늘려 채운다(모델이 종종 짧게 씀).
     for _ in range(3):
-        actual = _visible_len(post.get("body", ""))
+        actual = _content_len(post.get("body", ""))
         if actual >= length:
             break
         expanded = _expand_body(system, post.get("body", ""), length, actual)
-        if _visible_len(expanded) <= actual:
+        if _content_len(expanded) <= actual:
             break  # 더 이상 안 늘어나면 무한루프 방지
         post["body"] = expanded
 

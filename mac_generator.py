@@ -14,7 +14,8 @@ import time
 
 import config
 from modules import store
-from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser
+from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher
+from prompts.post_structures import get_structure
 from modules.llm import _RETRYABLE
 
 POLL_SECONDS = 15
@@ -101,6 +102,16 @@ def generate(row: dict) -> None:
     if guideline_text:
         print(f"  📋 가이드/설명서 반영: {len(guideline_text)}자")
 
+    # 웹 검색으로 사실 보강(자동 — 모델이 필요할 때만 검색). 실패해도 생성은 계속.
+    research_notes = researcher.research(
+        keyword=req.get("keyword", ""),
+        memo=req.get("memo", ""),
+        structure_label=(get_structure(structure_key) or {}).get("label", ""),
+        guideline=guideline_text,
+    )
+    if research_notes:
+        print(f"  🔎 웹 리서치 사실 보강: {len(research_notes)}자")
+
     # app.py 와 동일 순서: 문체 가이드 → 사진 분석 → 초안 생성
     style_guide = style_profiler.load_style_guide()
     analysis = image_analyzer.analyze_images(images, structure_key, photo_style)
@@ -119,6 +130,7 @@ def generate(row: dict) -> None:
         video_count=0,
         video_desc="",
         guideline=guideline_text,
+        research_notes=research_notes,
     )
 
     titles = post.get("title_candidates") or ["(제목 미정)"]

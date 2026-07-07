@@ -38,6 +38,10 @@ NAVER_CHROME_PROFILE = os.path.expanduser(os.getenv("NAVER_CHROME_PROFILE", "").
 # 사진 분석: 장수가 많아 비용 효율적인 Sonnet, 글 작성: 문체 품질이 중요해 Opus.
 VISION_MODEL = "claude-sonnet-4-6"
 WRITER_MODEL = "claude-opus-4-8"
+# 사실 보강 리서치(웹 검색): 비용 효율적인 Sonnet. 웹검색 서버툴을 이 모델로 돌린다.
+RESEARCH_MODEL = "claude-sonnet-4-6"
+# 웹 검색 사실 보강 기능 on/off (끄면 리서치 단계 건너뜀). env 로 덮어쓸 수 있다.
+ENABLE_RESEARCH = os.getenv("ENABLE_RESEARCH", "1").strip() not in ("0", "false", "False", "")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 
