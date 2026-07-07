@@ -502,7 +502,7 @@ def _insert_all_images(frame, page, paths, log):
 
 
 def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
-                          subheadings=None, family="나눔스퀘어", size=16):
+                          subheadings=None, family="나눔스퀘어", size=16, hashtags=None):
     """본문을 비비 글 형식으로 입력한다.
 
     구조: (협찬 고지문 회색) → 큰 제목(나눔명조24 볼드) → 요약(회색 나눔명조11)
@@ -651,6 +651,18 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             inserted += _insert_all_images(frame, page, leftover, log)
         except Exception as e:
             log(f"남은 사진 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
+
+    # 해시태그(SEO/GEO)는 미배치 사진까지 다 넣은 뒤 '맨 끝'에 붙인다(파묻힘 방지).
+    tags = [str(h).lstrip("#") for h in (hashtags or []) if str(h).strip()]
+    if tags:
+        try:
+            frame.locator(".se-text-paragraph").last.click(force=True, timeout=2500)
+            page.keyboard.press("End")
+        except Exception:
+            pass
+        kb.press("Enter"); kb.press("Enter"); body_on()
+        _type_lines(kb, " ".join(f"#{t}" for t in tags))
+        log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
 
     log(f"본문 입력 완료. 사진 {inserted}장 삽입(인라인 {len(used) - len(failed)}장), "
         f"소제목 {len(sub_set)}개 스타일.")
@@ -878,6 +890,7 @@ def run_job(job_dir: str, interactive: bool = True):
             subheadings=job.get("subheadings") or [],
             family=job.get("font", "나눔스퀘어"),
             size=job.get("size", 16),
+            hashtags=job.get("hashtags") or [],
         )
         _shot(page, job_dir, "02_text_and_photos")
 

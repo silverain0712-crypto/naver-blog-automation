@@ -37,18 +37,13 @@ def _build_job_dir(row: dict):
         except Exception as e:
             print(f"  사진 {i} 내려받기 실패: {e}")
 
-    # 해시태그(SEO 10개)를 본문 끝에 붙여 네이버 글에 실제로 들어가게 한다.
-    # (폰 편집 본문에는 없고 저장 시점에만 추가 → 매 글 빠짐없이 반영)
-    body = row.get("body", "")
-    hashtags = data.get("hashtags") or []
-    if hashtags:
-        tag_line = " ".join(f"#{h.lstrip('#')}" for h in hashtags)
-        body = body.rstrip() + "\n\n" + tag_line
-
+    # 해시태그는 본문에 섞지 않고 따로 넘긴다 → writer 가 '맨 끝'(미배치 사진 뒤)에 넣어
+    # 사진 더미에 파묻히지 않게 한다.
     draft = {
         "blog_id": data.get("blog_id", "bbnation"),
         "title": row.get("title", ""),
-        "body": body,
+        "body": row.get("body", ""),
+        "hashtags": data.get("hashtags") or [],
         "images": img_names,
         "videos": [],
         "captions": data.get("captions", {}),
