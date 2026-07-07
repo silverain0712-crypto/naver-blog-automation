@@ -16,6 +16,7 @@ from modules.llm import call_json
 from modules.style_profiler import profile_to_prompt
 from prompts.post_structures import get_structure
 from prompts.style_rules import STYLE_RULES, sponsor_instruction
+from prompts.edit_lessons import EDIT_LESSONS
 
 _POST_SCHEMA = {
     "type": "object",
@@ -244,6 +245,8 @@ def generate_post(
 
     system = (
         STYLE_RULES
+        + "\n\n"
+        + EDIT_LESSONS
         + "\n\n"
         + profile_to_prompt(style_guide)
         + "\n\n"
