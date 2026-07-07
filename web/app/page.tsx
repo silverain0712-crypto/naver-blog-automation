@@ -97,7 +97,8 @@ export default function NewPostPage() {
   const [err, setErr] = useState("");
   const [showOptional, setShowOptional] = useState(false);
   const [pics, setPics] = useState<Pic[]>([]);
-  const [guideFile, setGuideFile] = useState<File | null>(null);
+  const [guideFiles, setGuideFiles] = useState<File[]>([]);
+  const [guideText, setGuideText] = useState("");
   const [dragPhotos, setDragPhotos] = useState(false);
   const [dragGuide, setDragGuide] = useState(false);
   const [learning, setLearning] = useState(false);
@@ -127,6 +128,15 @@ export default function NewPostPage() {
       URL.revokeObjectURL(prev[i].url);
       return prev.filter((_, idx) => idx !== i);
     });
+  }
+
+  // 가이드/설명서 파일 추가(입력/드롭 공용) — 여러 개 누적. 이미지 필터는 두지 않는다(엑셀·PDF 등).
+  function addGuideFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    setGuideFiles((prev) => [...prev, ...Array.from(list)]);
+  }
+  function removeGuideFile(i: number) {
+    setGuideFiles((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   // '발행 글 학습' — 맥에 신호를 보내고 style_sync 결과가 올 때까지 폴링.
@@ -196,7 +206,8 @@ export default function NewPostPage() {
         optional_fields: optional,
         photoCount: pics.length,
         photoMimes: pics.map((p) => p.file.type),
-        guidelineName: guideFile?.name ?? "",
+        guidelineNames: guideFiles.map((f) => f.name),
+        guidelineText: guideText.trim(),
       };
       const res = await fetch("/api/drafts", {
         method: "POST",
@@ -207,10 +218,10 @@ export default function NewPostPage() {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error ?? "생성 요청 실패");
       }
-      const { id, uploads, guidelineUpload } = (await res.json()) as {
+      const { id, uploads, guidelineUploads } = (await res.json()) as {
         id: string;
         uploads: { path: string; url: string }[];
-        guidelineUpload: { path: string; url: string } | null;
+        guidelineUploads: { path: string; url: string }[];
       };
 
       // 2) 사진을 서명 URL 로 직접 업로드 (Vercel 함수 우회).
@@ -239,19 +250,20 @@ export default function NewPostPage() {
         if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
       }
 
-      // 2-b) 협찬 가이드라인 파일 업로드(원본 그대로)
-      if (guidelineUpload && guideFile) {
-        setProgress("가이드라인 업로드 중…");
-        const put = await fetch(guidelineUpload.url, {
+      // 2-b) 협찬 가이드/제품 설명서 파일 업로드(원본 그대로 — 여러 개)
+      for (let i = 0; i < guidelineUploads.length; i++) {
+        setProgress(`가이드/설명서 업로드 ${i + 1}/${guidelineUploads.length}`);
+        const gf = guideFiles[i];
+        const put = await fetch(guidelineUploads[i].url, {
           method: "PUT",
-          headers: { "content-type": guideFile.type || "application/octet-stream" },
-          body: guideFile,
+          headers: { "content-type": gf.type || "application/octet-stream" },
+          body: gf,
         });
-        if (!put.ok) throw new Error(`가이드라인 업로드 실패 (${put.status})`);
+        if (!put.ok) throw new Error(`가이드/설명서 ${i + 1} 업로드 실패 (${put.status})`);
       }
 
       // 3) 업로드 끝나면 생성 시작 상태로 전환
-      if (uploads.length > 0 || guidelineUpload) {
+      if (uploads.length > 0 || guidelineUploads.length > 0) {
         await fetch(`/api/drafts/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -421,55 +433,75 @@ export default function NewPostPage() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <span className={labelC}>협찬 가이드라인 파일 (선택)</span>
-          {!guideFile ? (
-            <label
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragGuide(true);
-              }}
-              onDragLeave={() => setDragGuide(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragGuide(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) setGuideFile(f);
-              }}
-              className={`flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-3 py-4 transition-colors ${
-                dragGuide
-                  ? "border-blue-400 bg-blue-50 text-blue-500"
-                  : "border-neutral-300 bg-neutral-50 text-neutral-500 active:bg-neutral-100"
-              }`}
-            >
-              <span className="text-xl">📋</span>
-              <span className="flex flex-col">
-                <span className="text-sm font-medium text-neutral-600">가이드 파일 첨부</span>
-                <span className="text-xs text-neutral-400">
-                  엑셀·PDF·워드·이미지 — 탭하거나 끌어다 놓기
-                </span>
+          <span className={labelC}>
+            협찬 가이드 · 제품 설명서 (선택){guideFiles.length > 0 && ` · ${guideFiles.length}개`}
+          </span>
+          <span className="-mt-1 text-xs text-neutral-400">
+            협찬 가이드라인뿐 아니라 제품 설명서·스펙 자료도 인식해요. 파일 여러 개 + 텍스트 함께 가능.
+          </span>
+          <label
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragGuide(true);
+            }}
+            onDragLeave={() => setDragGuide(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragGuide(false);
+              addGuideFiles(e.dataTransfer.files);
+            }}
+            className={`flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-3 py-4 transition-colors ${
+              dragGuide
+                ? "border-blue-400 bg-blue-50 text-blue-500"
+                : "border-neutral-300 bg-neutral-50 text-neutral-500 active:bg-neutral-100"
+            }`}
+          >
+            <span className="text-xl">📋</span>
+            <span className="flex flex-col">
+              <span className="text-sm font-medium text-neutral-600">파일 첨부 (여러 개 가능)</span>
+              <span className="text-xs text-neutral-400">
+                엑셀·PDF·워드·이미지 — 탭하거나 끌어다 놓기
               </span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.xlsm,.pdf,.docx,.csv,.txt,image/*"
-                className="hidden"
-                onChange={(e) => setGuideFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-          ) : (
-            <div className="flex items-center justify-between rounded-xl border border-neutral-300 bg-white px-3 py-3">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="text-lg">📋</span>
-                <span className="truncate text-sm text-neutral-700">{guideFile.name}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setGuideFile(null)}
-                className="ml-2 shrink-0 rounded-lg border border-neutral-300 px-2 py-1 text-xs text-neutral-600"
-              >
-                제거
-              </button>
+            </span>
+            <input
+              type="file"
+              accept=".xlsx,.xls,.xlsm,.pdf,.docx,.csv,.txt,image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addGuideFiles(e.target.files);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+          {guideFiles.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {guideFiles.map((f, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between rounded-xl border border-neutral-300 bg-white px-3 py-2.5"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="text-lg">📋</span>
+                    <span className="truncate text-sm text-neutral-700">{f.name}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeGuideFile(i)}
+                    className="ml-2 shrink-0 rounded-lg border border-neutral-300 px-2 py-1 text-xs text-neutral-600"
+                  >
+                    제거
+                  </button>
+                </div>
+              ))}
             </div>
           )}
+          <textarea
+            value={guideText}
+            onChange={(e) => setGuideText(e.target.value)}
+            className={`${field} min-h-20`}
+            placeholder="가이드라인·제품 설명서 내용을 직접 붙여넣어도 돼요 (파일 없이 텍스트만도 가능)"
+          />
         </div>
 
         <button

@@ -45,6 +45,38 @@ def _captions_from_placement(photo_placement: list[dict]) -> dict:
     return caps
 
 
+def _collect_guideline(req: dict) -> str:
+    """협찬 가이드/제품 설명서를 하나의 텍스트로 합친다.
+
+    (1) 업로드된 파일들(guideline_paths, 구버전은 단일 guideline_path)을 각각 내려받아
+        텍스트 추출, (2) 폰에서 직접 붙여넣은 텍스트(guideline_text) 순으로 이어붙인다.
+    파싱 실패한 파일은 건너뛰고 나머지로 계속 진행한다.
+    """
+    paths = list(req.get("guideline_paths") or [])
+    if not paths and req.get("guideline_path"):
+        paths = [req["guideline_path"]]
+    names = req.get("guideline_names") or []
+
+    parts: list[str] = []
+    for i, p in enumerate(paths):
+        if not p:
+            continue
+        name = names[i] if i < len(names) else (req.get("guideline_name") or p)
+        try:
+            gbytes = store.download(p)
+            text = guideline_parser.extract_text(gbytes, name)
+            if text.strip():
+                parts.append(f"[첨부 {i + 1}: {name}]\n{text.strip()}")
+        except Exception as e:
+            print(f"  (가이드/설명서 '{name}' 파싱 실패, 무시하고 진행: {str(e)[:60]})")
+
+    pasted = (req.get("guideline_text") or "").strip()
+    if pasted:
+        parts.append(f"[직접 입력한 가이드/설명]\n{pasted}")
+
+    return "\n\n".join(parts)
+
+
 def generate(row: dict) -> None:
     req = (row.get("data") or {}).get("request") or {}
     structure_key = req.get("structure_key", "free")
@@ -63,16 +95,11 @@ def generate(row: dict) -> None:
     except Exception as e:
         print(f"  (발행 글 학습 건너뜀: {str(e)[:60]})")
 
-    # 협찬 가이드라인 파일(있으면) 다운로드+텍스트 추출 → 생성 프롬프트에 주입
-    guideline_text = ""
-    gpath = req.get("guideline_path")
-    if gpath:
-        try:
-            gbytes = store.download(gpath)
-            guideline_text = guideline_parser.extract_text(gbytes, req.get("guideline_name", gpath))
-            print(f"  📋 협찬 가이드 반영: {len(guideline_text)}자 추출")
-        except Exception as e:
-            print(f"  (협찬 가이드 파싱 실패, 무시하고 진행: {str(e)[:60]})")
+    # 협찬 가이드 · 제품 설명서 — 파일 여러 개(있으면) + 폰에서 직접 붙여넣은 텍스트를
+    # 하나로 합쳐 생성 프롬프트에 주입한다.
+    guideline_text = _collect_guideline(req)
+    if guideline_text:
+        print(f"  📋 가이드/설명서 반영: {len(guideline_text)}자")
 
     # app.py 와 동일 순서: 문체 가이드 → 사진 분석 → 초안 생성
     style_guide = style_profiler.load_style_guide()

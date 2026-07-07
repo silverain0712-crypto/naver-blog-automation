@@ -61,33 +61,49 @@ export async function POST(req: NextRequest) {
       imagePaths.push(path);
     }
 
-    // 협찬 가이드라인 파일(xlsx/pdf/docx/이미지 등) — 있으면 서명 URL 발급.
-    // 원본 그대로 올려 맥 mac_generator 가 파싱해 생성 프롬프트에 반영한다.
-    const guidelineName = typeof b.guidelineName === "string" ? b.guidelineName.trim() : "";
-    let guidelineUpload: { path: string; url: string } | null = null;
-    let guideline_path = "";
-    if (guidelineName) {
-      const gext = guidelineName.includes(".")
-        ? guidelineName.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "")
+    // 협찬 가이드 · 제품 설명서 — 파일 여러 개(xlsx/pdf/docx/이미지 등) + 직접 붙여넣은 텍스트.
+    // 파일은 원본 그대로 올려 맥 mac_generator 가 파싱하고, 텍스트는 그대로 생성 프롬프트에 반영한다.
+    const guidelineNames: string[] = Array.isArray(b.guidelineNames)
+      ? b.guidelineNames.map((n: unknown) => String(n).trim()).filter(Boolean)
+      : typeof b.guidelineName === "string" && b.guidelineName.trim() // 구버전 폰 호환
+        ? [b.guidelineName.trim()]
+        : [];
+    const guidelineText = typeof b.guidelineText === "string" ? b.guidelineText.trim() : "";
+
+    const guidelineUploads: { path: string; url: string }[] = [];
+    const guideline_paths: string[] = [];
+    for (let i = 0; i < guidelineNames.length; i++) {
+      const nm = guidelineNames[i];
+      const gext = nm.includes(".")
+        ? nm.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "")
         : "bin";
-      guideline_path = `${draft_id}/guideline.${gext || "bin"}`;
-      guidelineUpload = { path: guideline_path, url: await createSignedUpload(guideline_path) };
+      const path = `${draft_id}/guideline_${i + 1}.${gext || "bin"}`;
+      guidelineUploads.push({ path, url: await createSignedUpload(path) });
+      guideline_paths.push(path);
     }
 
-    const needUpload = photoCount > 0 || !!guidelineUpload;
+    const needUpload = photoCount > 0 || guidelineUploads.length > 0;
     await insertDraft({
       id: draft_id,
       status: needUpload ? "uploading" : "generating",
       title: "",
       body: "",
       data: {
-        request: { ...request, guideline_path, guideline_name: guidelineName },
+        request: {
+          ...request,
+          guideline_paths,
+          guideline_names: guidelineNames,
+          guideline_text: guidelineText,
+          // 구버전 맥 워커 호환용 단일 필드(첫 파일)
+          guideline_path: guideline_paths[0] ?? "",
+          guideline_name: guidelineNames[0] ?? "",
+        },
       },
       images: imagePaths,
       thumbnail: null,
     });
 
-    return NextResponse.json({ id: draft_id, uploads, guidelineUpload });
+    return NextResponse.json({ id: draft_id, uploads, guidelineUploads });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
