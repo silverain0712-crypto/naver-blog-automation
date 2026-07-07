@@ -17,6 +17,7 @@ from modules.style_profiler import profile_to_prompt
 from prompts.post_structures import get_structure
 from prompts.style_rules import STYLE_RULES, sponsor_instruction
 from prompts.edit_lessons import EDIT_LESSONS
+from prompts.geo_structure import GEO_STRUCTURE
 
 _POST_SCHEMA = {
     "type": "object",
@@ -94,12 +95,14 @@ _EXPAND_SCHEMA = {
 
 
 def _visible_len(body: str) -> int:
-    """[사진N]/[영상N] 자리표시를 뺀 실제 본문 글자수(공백 포함).
+    """네이버 '공백 포함' 글자수에 맞춘 본문 길이.
 
-    네이버에 올라가면 [사진N] 자리는 이미지가 되어 글자수에 안 들어가므로,
-    사용자가 보는 실제 글자수(공백 포함)와 맞추려면 마커를 빼고 센다.
+    - [사진N]/[영상N] 자리표시는 이미지가 되어 글자수에 안 들어가므로 제거.
+    - 네이버 글자수는 공백은 세지만 줄바꿈은 세지 않는다. 비비 글은 줄바꿈이 아주 많아
+      줄바꿈을 세면 실제보다 크게 부풀어 목표 미달인데도 통과된다 → 줄바꿈 제외하고 센다.
     """
-    return len(_MEDIA_MARKER_RE.sub("", body or ""))
+    t = _MEDIA_MARKER_RE.sub("", body or "")
+    return len(t.replace("\n", "").replace("\r", ""))
 
 
 def _expand_body(system: str, current_body: str, target: int, actual: int) -> str:
@@ -248,6 +251,8 @@ def generate_post(
         + "\n\n"
         + EDIT_LESSONS
         + "\n\n"
+        + GEO_STRUCTURE
+        + "\n\n"
         + profile_to_prompt(style_guide)
         + "\n\n"
         + sponsor_instruction(sponsor_type)
@@ -315,8 +320,8 @@ def generate_post(
         max_tokens=16000,
     )
 
-    # 목표 길이 미달이면 최대 2회까지 본문을 늘려 채운다(모델이 종종 짧게 씀).
-    for _ in range(2):
+    # 목표 길이 미달이면 최대 3회까지 본문을 늘려 채운다(모델이 종종 짧게 씀).
+    for _ in range(3):
         actual = _visible_len(post.get("body", ""))
         if actual >= length:
             break

@@ -83,8 +83,10 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const confirmNeeded: { item: string; note: string }[] = d.confirm_needed ?? [];
   const targetLen: number = d.request?.length ?? 0;
   const guidelineName: string = d.request?.guideline_name ?? "";
-  // [사진N]/[영상N] 자리표시는 실제 글자수에 안 들어가므로 빼고 센다(공백 포함).
-  const visibleLen = body.replace(/\[(?:사진|영상)\s*\d+\]/g, "").length;
+  // 네이버 '공백 포함' 글자수 기준: [사진N]/[영상N] 마커 제거 + 줄바꿈 제외(공백은 포함).
+  const visibleLen = body
+    .replace(/\[(?:사진|영상)\s*\d+\]/g, "")
+    .replace(/[\r\n]/g, "").length;
 
   if (draft.status === "generating" || draft.status === "uploading") {
     return (
