@@ -126,8 +126,9 @@ def _expand_body(system: str, current_body: str, target: int, actual: int) -> st
         "- body 만 다시 써서 반환하라(늘어난 전체 본문).\n\n"
         f"[현재 초안 본문]\n{current_body}"
     )
+    # 확장(늘리기)은 창작보다 부풀리기라 Opus까지 필요 없음 → Sonnet으로 속도 확보.
     result = call_json(
-        model=config.WRITER_MODEL,
+        model=config.VISION_MODEL,
         system=system,
         content=[{"type": "text", "text": instruction}],
         schema=_EXPAND_SCHEMA,
@@ -355,14 +356,12 @@ def generate_post(
         max_tokens=16000,
     )
 
-    # 목표 길이(공백 제외) 미달이면 최대 3회까지 본문을 늘려 채운다(모델이 종종 짧게 씀).
-    for _ in range(3):
-        actual = _content_len(post.get("body", ""))
-        if actual >= length:
-            break
+    # 목표 길이(공백 제외) 미달이면 1회만 본문을 늘려 채운다(폰 즉시성 우선).
+    # 과거 최대 3회 → Opus 대용량 호출이 최대 3연타로 붙어 수 분 지연되던 것을 축소.
+    actual = _content_len(post.get("body", ""))
+    if actual < length:
         expanded = _expand_body(system, post.get("body", ""), length, actual)
-        if _content_len(expanded) <= actual:
-            break  # 더 이상 안 늘어나면 무한루프 방지
-        post["body"] = expanded
+        if _content_len(expanded) > actual:
+            post["body"] = expanded
 
     return post

@@ -32,7 +32,7 @@ def get_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(
         api_key=config.ANTHROPIC_API_KEY,
         max_retries=4,
-        timeout=180.0,
+        timeout=60.0,
     )
 
 
@@ -73,7 +73,7 @@ def call_json(
     """
     client = get_client()
     last = None
-    for attempt in range(3):  # 총 3회(각 회마다 SDK 가 추가로 자동 재시도)
+    for attempt in range(2):  # 총 2회(각 회마다 SDK 가 추가로 자동 재시도) — 무한 펜딩 방지
         try:
             response = client.messages.create(
                 model=model,
@@ -86,6 +86,6 @@ def call_json(
             return json.loads(text)
         except _RETRYABLE as e:
             last = e
-            if attempt < 2:
-                time.sleep(8 * (attempt + 1))  # 8s, 16s — 네트워크 회복 대기
+            if attempt < 1:
+                time.sleep(8)  # 네트워크 회복 대기
     raise last
