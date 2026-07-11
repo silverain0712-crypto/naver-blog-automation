@@ -32,7 +32,7 @@ def get_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(
         api_key=config.ANTHROPIC_API_KEY,
         max_retries=4,
-        timeout=60.0,
+        timeout=300.0,
     )
 
 
@@ -75,14 +75,17 @@ def call_json(
     last = None
     for attempt in range(2):  # 총 2회(각 회마다 SDK 가 추가로 자동 재시도) — 무한 펜딩 방지
         try:
-            response = client.messages.create(
+            # 대용량 Opus 생성은 1~2분 걸려 비스트리밍이면 read timeout 이 나기 쉽다.
+            # 스트리밍으로 받으면 이벤트가 계속 흘러 연결이 살아있어 안정적이다.
+            with client.messages.stream(
                 model=model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": content}],
                 output_config={"format": {"type": "json_schema", "schema": schema}},
-            )
-            text = next((b.text for b in response.content if b.type == "text"), "")
+            ) as stream:
+                final = stream.get_final_message()
+            text = next((b.text for b in final.content if b.type == "text"), "")
             return json.loads(text)
         except _RETRYABLE as e:
             last = e
