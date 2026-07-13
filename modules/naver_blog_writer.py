@@ -592,11 +592,25 @@ def _insert_all_images(frame, page, paths, log):
             dlg.first.click(timeout=3000)
     except Exception:
         pass
-    deadline = time.time() + 240  # 여러 장은 서버 업로드가 오래 걸릴 수 있음
+    # '모든' 사진이 들어올 때까지 기다린다. before+1 로 끊으면 여러 장 업로드가
+    # 스태거링되는 사이 busy 표시가 잠깐 사라지는 순간에 1장만 넣고 멈춰(5/20 등) 사진이
+    # 대량 누락되던 버그 → 목표 개수(before+len) 도달 또는 '진행중 아님+개수 정체' 시 종료.
+    target = before + len(small)
+    deadline = time.time() + 300  # 여러 장은 서버 업로드가 오래 걸릴 수 있음
+    stable = 0
+    last_count = before
     while time.time() < deadline:
-        b = _busy_text(page)
-        if not b and _img_count(frame) >= before + 1:
+        cnt = _img_count(frame)
+        if cnt >= target:
             break
+        # 개수가 더 안 늘고(정체) busy 표시도 없으면 몇 번 확인 후 종료(무한대기 방지).
+        if cnt == last_count and not _busy_text(page):
+            stable += 1
+            if stable >= 4:
+                break
+        else:
+            stable = 0
+        last_count = cnt
         time.sleep(3)
     done = _img_count(frame) - before
     pend = _busy_text(page)
@@ -686,6 +700,12 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     intro = lines[:g_idx] if g_idx is not None else []
     rest_text = "\n".join(lines[g_idx:]) if g_idx is not None else body
 
+    # [사진N] 마커를 반드시 '자기 줄'로 분리한다. 생성기가 "...했어요. [사진1]" 처럼
+    # 본문과 같은 줄에 붙여 쓰면 PASS 2 가 마커 문단(정확히 '[사진N]')을 못 찾아 재삽입에
+    # 실패하던 문제 해결 → 앞뒤에 줄바꿈을 넣어 마커가 독립 문단이 되게 한다.
+    rest_text = re.sub(r"[ \t]*(\[사진\s*\d+\])[ \t]*", r"\n\1\n", rest_text)
+    rest_text = re.sub(r"\n{3,}", "\n\n", rest_text)
+
     # 인트로 = 인사말 전까지. 고지문(회색) → 큰 제목(첫 블록, 나눔명조30 블랙)
     #        → 메타 요약(다음 블록, 회색). 제목/요약은 '첫 빈 줄' 기준으로 가른다.
     #        (예전엔 첫 줄 1줄만 제목이라 2줄 제목이 회색 요약으로 새어 제목이 없어 보였음)
@@ -768,20 +788,15 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                     kb.press("Enter")
                     time.sleep(0.04)
 
-    # 해시태그도 사진 삽입(PASS 2) '전에' 텍스트로 먼저 넣는다(사진 방해 없이 확실히 입력).
+    # 해시태그는 '모든 사진 배치가 끝난 뒤(진짜 맨 끝)'에 넣는다. 사진 재삽입이 실패해
+    # 끝에 사진이 쌓이면 그 위에 파묻혀 태그로 등록 안 되던 문제 방지.
     tags = [str(h).lstrip("#") for h in (hashtags or []) if str(h).strip()]
-    if tags:
-        _focus_body_end(frame, log)
-        kb.press("Enter"); kb.press("Enter"); body_on()
-        _type_lines(kb, " ".join(f"#{t}" for t in tags))
-        log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
 
     # 여기서 본문 텍스트는 100% 입력 완료 → 사진 넣기 전에 유실 여부 자가진단.
     try:
         texts = frame.locator(".se-text-paragraph").all_inner_texts()
         got = len(re.sub(r"\s", "", "".join(texts)))
-        expect = len(re.sub(r"\s", "", re.sub(r"\[영상\s*\d+\]", "", body))) \
-            + sum(len(re.sub(r"\s", "", t)) + 1 for t in tags)
+        expect = len(re.sub(r"\s", "", re.sub(r"\[영상\s*\d+\]", "", body)))
         mark = "✓" if got >= expect * 0.92 else "⚠ 유실 의심"
         log(f"자가진단(PASS1 텍스트): 에디터 {got}자 / 예상 {expect}자 {mark}")
     except Exception as e:
@@ -793,11 +808,28 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     for n in sorted(used):
         try:
             _dismiss_continue_popup(frame, log)
-            # '[사진N]'만 든 문단을 정확히 집는다(get_by_text 는 상위 컴포넌트를 잡거나
-            # 사진2 가 사진21 에 걸리므로, se-text-paragraph 를 정규식 exact 로 한정).
-            para = frame.locator(".se-text-paragraph").filter(
-                has_text=re.compile(rf"^\s*\[사진{n}\]\s*$")).first
-            para.click(timeout=6000, force=True)  # force: 툴바 등에 가려도 클릭
+            # '[사진N]'만 든 문단을 query_selector_all 로 훑어 '정확히 일치'하는 걸 집는다.
+            # text_content() 사용(중요): inner_text() 는 '화면에 보이는' 텍스트만 반환해
+            # 스크롤 밖 마커가 ""로 나와 매칭 실패 → 실행마다 결과가 달라지던 근본 원인.
+            # text_content 는 가시성 무관 원본 DOM 텍스트라 모든 마커를 찾는다.
+            # ('사진2'가 '사진21'에 걸리는 것도 == 정확 비교라 방지됨.)
+            handle = None
+            for el in frame.query_selector_all(".se-text-paragraph"):
+                try:
+                    if (el.text_content() or "").strip() == f"[사진{n}]":
+                        handle = el
+                        break
+                except Exception:
+                    continue
+            if handle is None:
+                raise RuntimeError("마커 문단 못 찾음")
+            # 긴 글에서 화면 밖 문단도 클릭되게 JS 로 먼저 스크롤(스크롤 API 타임아웃 회피).
+            try:
+                handle.evaluate("el => el.scrollIntoView({block: 'center'})")
+                time.sleep(0.15)
+            except Exception:
+                pass
+            handle.click(timeout=4000, force=True)
             # 마커 텍스트를 통째로 선택해 지우고(빈 문단) 그 자리에 사진을 넣는다.
             kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
             _insert_image(frame, page, [small_paths[n - 1]], log)
@@ -821,8 +853,15 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         except Exception as e:
             log(f"남은 사진 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
 
+    # 해시태그는 '모든 사진 뒤 진짜 맨 끝'에 넣어 네이버 태그로 등록되게 한다.
+    if tags:
+        _focus_body_end(frame, log)
+        kb.press("Enter"); kb.press("Enter"); body_on()
+        _type_lines(kb, " ".join(f"#{t}" for t in tags))
+        log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
+
     log(f"본문 입력 완료. 사진 {inserted}장 삽입(자리 {len(used) - len(failed)}장), "
-        f"소제목 {len(sub_set)}개 스타일.")
+        f"소제목 {len(sub_set)}개 스타일, 해시태그 {len(tags)}개.")
     return True
 
 
