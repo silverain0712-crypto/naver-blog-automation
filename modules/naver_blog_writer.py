@@ -246,13 +246,32 @@ def _set_color(frame, color, log):
         log(f"글자색 설정 실패: {e}")
 
 
+# 이모지/기호(📍❤️✔ 등). insert_text 가 이 문자 뒤 텍스트를 유실시키는 경우가 있다.
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF"
+    "\U00002B00-\U00002BFF\U0000FE0F\U00002764\U000023E9-\U000023FA]"
+)
+
+
+def _insert_text_safe(kb, text):
+    """이모지가 든 줄은 insert_text 가 이모지 뒤 글자를 흘리므로 char 단위 type() 로
+    안전 입력한다(느리지만 유실 없음). 이모지 없으면 빠른 insert_text.
+    입력 직후 짧게 쉬어 에디터가 처리할 시간을 준다(너무 빠르면 글자/줄이 유실됨)."""
+    if _EMOJI_RE.search(text):
+        kb.type(text)
+    else:
+        kb.insert_text(text)
+    time.sleep(0.05)
+
+
 def _type_lines(kb, text):
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if line:
-            kb.insert_text(line)
+            _insert_text_safe(kb, line)
         if i < len(lines) - 1:
             kb.press("Enter")
+            time.sleep(0.04)
 
 
 def _set_bold(frame, on, log):
@@ -585,6 +604,27 @@ def _insert_all_images(frame, page, paths, log):
     return done
 
 
+def _focus_body_end(frame, log=None):
+    """이미지 삽입 뒤 커서가 편집영역을 벗어나면 이후 타이핑이 통째로 유실된다
+    (네이버 에디터 변경으로 '삽입 후 커서가 이미지 뒤에 남는다'는 가정이 깨짐).
+    본문 마지막 문단을 실제로 클릭해 커서를 편집영역 끝으로 되돌린다."""
+    for sel in (".se-component.se-text .se-text-paragraph",
+                ".se-main-container .se-text-paragraph",
+                ".se-text-paragraph"):
+        try:
+            loc = frame.locator(sel)
+            if loc.count():
+                loc.last.click(timeout=2000)
+                frame.page.keyboard.press("End")
+                # 클릭 직후 바로 타이핑하면 커서가 안정되기 전이라 사진 뒤 첫 글자들이
+                # 씹힌다(예: '생각보다 너무 편하게' 유실). 짧게 안정화 대기 후 이어쓴다.
+                time.sleep(0.45)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                           subheadings=None, family="나눔스퀘어", size=16, hashtags=None):
     """본문을 비비 글 형식으로 입력한다.
@@ -674,13 +714,14 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     _insert_divider(frame, log, "line6")
     body_on()  # 구분선 뒤 본문 스타일 재적용(검정 나눔스퀘어)
 
-    # 사진을 [사진N] 자리에 인라인으로 자동 배치한다.
-    # 예전 실패(둘째 사진부터 파일선택창이 안 뜸)는 _insert_image 가 업로드 완료를
-    # 장당 기다려 해결. 인라인 삽입 실패/본문 미참조 사진만 끝에 모아 올린다.
+    # ── PASS 1: 본문 텍스트를 사진 삽입 없이 '통째로' 먼저 다 입력한다. ──
+    # 사진 자리는 '[사진N]' 마커를 텍스트 그대로(자기 문단) 남겨두고, PASS 2에서 그
+    # 마커를 다시 '검색'해 실제 사진으로 교체한다. 이렇게 하면 사진 삽입이 커서를
+    # 흔들어도 본문 텍스트가 유실되지 않고(유실 전파 없음), 사진도 제자리에 들어간다.
     small_paths = _resize_for_upload(image_paths, log) if image_paths else []
     inserted = 0
-    used = set()    # 본문에서 참조된 사진 번호
-    failed = set()  # 인라인 삽입 실패 → 끝에 재업로드 대상
+    used = set()    # 본문에서 참조된 사진 번호(마커로 남겨둔 것)
+    failed = set()  # PASS 2 재삽입 실패 → 끝에 모아 업로드
     tokens = re.split(r"(\[표\][\s\S]*?\[/표\]|\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
     for tok in tokens:
         mt = re.match(r"\[표\]([\s\S]*?)\[/표\]", tok)
@@ -691,9 +732,13 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             if table_rows:
                 try:
                     _insert_table(frame, page, table_rows, log)
-                    body_on()  # 표 뒤 본문 스타일 복귀
+                    # 표 삽입 후 커서가 편집영역을 벗어나 '표 이후 본문 전체'가 유실되던
+                    # 문제 방지 → 본문 마지막 문단으로 커서 복원(안정화 대기 포함).
+                    _focus_body_end(frame, log)
+                    body_on()
                 except Exception as e:
                     log(f"  표 삽입 실패({str(e)[:50]}) → 텍스트로 대체")
+                    _focus_body_end(frame, log)
                     body_on()
                     for r in _normalize_table_rows(table_rows):
                         _type_lines(kb, "  ".join(c for c in r if c)); kb.press("Enter")
@@ -702,42 +747,70 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             if 1 <= n <= len(image_paths):
                 used.add(n)
                 cap = captions.get(str(n)) or captions.get(n)
-                try:
-                    # 현재 커서 위치([사진N] 자리)에 그 사진을 인라인 삽입.
-                    # 삽입 후 커서는 이미지 뒤에 오므로 문서 끝으로 이동시키지 않는다.
-                    _insert_image(frame, page, [small_paths[n - 1]], log)
-                    inserted += 1
-                    kb.press("Enter")  # 이미지 뒤 새 줄
-                    if cap:
-                        gray_on(); _type_lines(kb, cap); kb.press("Enter")
-                    body_on()  # 이어질 본문은 검정 나눔스퀘어로 복귀
-                except Exception as e:
-                    log(f"  사진{n} 인라인 삽입 실패({str(e)[:50]}) → 마커로 남기고 끝에 업로드")
-                    failed.add(n)
-                    body_on()
-                    kb.insert_text(f"[사진{n}]")
-                    if cap:
-                        kb.press("Enter"); gray_on(); _type_lines(kb, cap); body_on()
+                # 사진 자리는 '[사진N]' 마커 텍스트만 자기 문단에 남긴다(실제 사진은 PASS 2).
+                body_on(); kb.insert_text(f"[사진{n}]")
+                if cap:
+                    kb.press("Enter"); gray_on(); _type_lines(kb, cap); body_on()
             else:
                 kb.insert_text(tok)
         elif mv:
-            kb.insert_text(tok)  # 영상은 자동 업로드 안 함 → 마커 유지
+            kb.insert_text(tok)  # 영상은 마커 유지(수동)
         else:
             body_lines = tok.split("\n")
             for i, line in enumerate(body_lines):
                 norm = _strip_bullet(line)
                 if norm and norm in sub_set:
                     # 소제목: ● 등 불릿 제거 + 나눔명조 19 검정 볼드
-                    sub_on(); kb.insert_text(norm); body_on()
+                    sub_on(); _insert_text_safe(kb, norm); body_on()
                 elif line:
-                    kb.insert_text(line)
+                    _insert_text_safe(kb, line)
                 if i < len(body_lines) - 1:
                     kb.press("Enter")
+                    time.sleep(0.04)
 
-    # 본문에서 참조 안 됐거나 인라인 삽입에 실패한 사진만 끝에 모아 올린다.
+    # 해시태그도 사진 삽입(PASS 2) '전에' 텍스트로 먼저 넣는다(사진 방해 없이 확실히 입력).
+    tags = [str(h).lstrip("#") for h in (hashtags or []) if str(h).strip()]
+    if tags:
+        _focus_body_end(frame, log)
+        kb.press("Enter"); kb.press("Enter"); body_on()
+        _type_lines(kb, " ".join(f"#{t}" for t in tags))
+        log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
+
+    # 여기서 본문 텍스트는 100% 입력 완료 → 사진 넣기 전에 유실 여부 자가진단.
+    try:
+        texts = frame.locator(".se-text-paragraph").all_inner_texts()
+        got = len(re.sub(r"\s", "", "".join(texts)))
+        expect = len(re.sub(r"\s", "", re.sub(r"\[영상\s*\d+\]", "", body))) \
+            + sum(len(re.sub(r"\s", "", t)) + 1 for t in tags)
+        mark = "✓" if got >= expect * 0.92 else "⚠ 유실 의심"
+        log(f"자가진단(PASS1 텍스트): 에디터 {got}자 / 예상 {expect}자 {mark}")
+    except Exception as e:
+        log(f"자가진단 건너뜀: {str(e)[:40]}")
+
+    # ── PASS 2: [사진N] 마커를 실제 사진으로 교체한다. ──
+    # 각 사진마다 마커를 '텍스트로 다시 찾아' 삽입하므로, 한 사진에서 커서가 흔들려도
+    # 다음 사진은 새로 마커를 찾아 넣는다(유실 전파 없음).
+    for n in sorted(used):
+        try:
+            _dismiss_continue_popup(frame, log)
+            # '[사진N]'만 든 문단을 정확히 집는다(get_by_text 는 상위 컴포넌트를 잡거나
+            # 사진2 가 사진21 에 걸리므로, se-text-paragraph 를 정규식 exact 로 한정).
+            para = frame.locator(".se-text-paragraph").filter(
+                has_text=re.compile(rf"^\s*\[사진{n}\]\s*$")).first
+            para.click(timeout=6000, force=True)  # force: 툴바 등에 가려도 클릭
+            # 마커 텍스트를 통째로 선택해 지우고(빈 문단) 그 자리에 사진을 넣는다.
+            kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
+            _insert_image(frame, page, [small_paths[n - 1]], log)
+            inserted += 1
+        except Exception as e:
+            log(f"  사진{n} 재삽입 실패({str(e)[:45]}) → 마커 유지, 끝에 업로드")
+            failed.add(n)
+
+    # 본문에서 참조 안 됐거나 재삽입 실패한 사진만 끝에 모아 올린다.
     leftover = [image_paths[n - 1] for n in range(1, len(image_paths) + 1)
                 if n not in used or n in failed]
     if leftover:
+        _focus_body_end(frame, log)
         kb.press("Enter"); kb.press("Enter")
         _insert_divider(frame, log, "line6")
         body_on(); gray_on()
@@ -748,19 +821,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         except Exception as e:
             log(f"남은 사진 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
 
-    # 해시태그(SEO/GEO)는 미배치 사진까지 다 넣은 뒤 '맨 끝'에 붙인다(파묻힘 방지).
-    tags = [str(h).lstrip("#") for h in (hashtags or []) if str(h).strip()]
-    if tags:
-        try:
-            frame.locator(".se-text-paragraph").last.click(force=True, timeout=2500)
-            page.keyboard.press("End")
-        except Exception:
-            pass
-        kb.press("Enter"); kb.press("Enter"); body_on()
-        _type_lines(kb, " ".join(f"#{t}" for t in tags))
-        log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
-
-    log(f"본문 입력 완료. 사진 {inserted}장 삽입(인라인 {len(used) - len(failed)}장), "
+    log(f"본문 입력 완료. 사진 {inserted}장 삽입(자리 {len(used) - len(failed)}장), "
         f"소제목 {len(sub_set)}개 스타일.")
     return True
 
