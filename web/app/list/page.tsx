@@ -16,6 +16,7 @@ type Draft = {
 const badgeColor: Record<string, string> = {
   generating: "bg-blue-100 text-blue-700",
   draft_ready: "bg-green-100 text-green-700",
+  photo_stash: "bg-purple-100 text-purple-700",
   queued: "bg-amber-100 text-amber-700",
   posting: "bg-amber-100 text-amber-700",
   posted: "bg-neutral-200 text-neutral-700",

@@ -3,7 +3,13 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { STATUS_LABEL } from "@/lib/constants";
+import {
+  STATUS_LABEL,
+  POST_TYPES,
+  SPONSOR_TYPES,
+  POST_LENGTHS,
+  PHOTO_STYLES,
+} from "@/lib/constants";
 
 type Draft = {
   id: string;
@@ -22,7 +28,9 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [loadErr, setLoadErr] = useState("");
+  const [stashUrls, setStashUrls] = useState<string[]>([]); // 보관 사진 미리보기 URL
   const editedRef = useRef(false); // 사용자가 편집을 시작하면 폴링이 덮어쓰지 않게
+  const stashFormRef = useRef<HTMLFormElement>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/drafts/${id}`, { cache: "no-store" });
@@ -39,7 +47,8 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     return draft as Draft;
   }, [id]);
 
-  // 생성 중이면 2초마다 폴링, draft_ready 되면 멈춤
+  // 생성 중이면 2초마다 폴링, draft_ready 되면 멈춤.
+  // draft?.status 도 의존성에 둬서 photo_stash → generating 전환 시 폴링이 다시 시작되게 한다.
   useEffect(() => {
     let stop = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -55,7 +64,22 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       stop = true;
       clearTimeout(timer);
     };
-  }, [load]);
+  }, [load, draft?.status]);
+
+  // 사진 보관 상태면 미리보기용 서명 URL 을 받아온다.
+  useEffect(() => {
+    if (draft?.status !== "photo_stash") return;
+    let stop = false;
+    fetch(`/api/drafts/${id}/images`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { urls: [] }))
+      .then(({ urls }) => {
+        if (!stop) setStashUrls(urls ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [draft?.status, id]);
 
   async function save(queue: boolean) {
     setSaving(true);
@@ -67,6 +91,36 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     setSaving(false);
     if (res.ok && queue) router.push("/list");
     else if (res.ok) editedRef.current = false;
+  }
+
+  // 보관해둔 사진으로 초안 생성 시작 — 폼 값을 request 에 합쳐 status='generating' 전환.
+  async function generateFromStash() {
+    const fd = new FormData(stashFormRef.current ?? undefined);
+    const str = (k: string) => (fd.get(k) as string | null)?.trim() ?? "";
+    const prev = (draft?.data?.request ?? {}) as Record<string, unknown>;
+    const nextReq = {
+      ...prev,
+      structure_key: str("structure_key") || (prev.structure_key as string) || "free",
+      keyword: str("keyword"),
+      sponsor_type: str("sponsor_type") || (prev.sponsor_type as string) || "내돈내산",
+      length: parseInt(str("length") || String(prev.length ?? 1500), 10) || 1500,
+      photo_style: str("photo_style") || (prev.photo_style as string) || "감성 중심",
+      memo: str("memo"),
+    };
+    setSaving(true);
+    const res = await fetch(`/api/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        data: { ...(draft?.data ?? {}), request: nextReq },
+        status: "generating",
+      }),
+    });
+    setSaving(false);
+    if (res.ok) {
+      editedRef.current = false;
+      load(); // status 가 generating 으로 바뀌면 폴링 useEffect 가 다시 돈다
+    }
   }
 
   if (!draft) {
@@ -112,6 +166,129 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         <Link href="/" className="mt-4 inline-block text-sm text-blue-600">
           ← 새 글 쓰기
         </Link>
+      </main>
+    );
+  }
+
+  // 사진만 보관해둔 상태 — 사진 미리보기 + 간단 폼으로 '이 사진들로 초안 생성' 시작.
+  if (draft.status === "photo_stash") {
+    const r = d.request ?? {};
+    const fieldC =
+      "rounded-lg border border-neutral-300 px-3 py-2 text-base w-full bg-white";
+    const labelC = "text-sm font-medium text-neutral-700";
+    return (
+      <main className="mx-auto max-w-lg p-4 pb-24">
+        <header className="mb-3 flex items-center justify-between">
+          <Link href="/list" className="text-sm text-blue-600">
+            ← 목록
+          </Link>
+          <span className="rounded-full bg-neutral-100 px-2 py-1 text-xs text-neutral-600">
+            사진 보관 · {draft.images?.length ?? 0}장
+          </span>
+        </header>
+
+        <p className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
+          📷 보관해둔 사진이에요. 아래 정보를 채우고 <b>초안 생성</b>을 누르면 이 사진들로 글을 써요.
+        </p>
+
+        {stashUrls.length > 0 && (
+          <div className="mb-4 grid grid-cols-4 gap-2">
+            {stashUrls.map((u, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={i}
+                src={u}
+                alt={`보관 사진 ${i + 1}`}
+                className="aspect-square w-full rounded-lg border border-neutral-200 object-cover"
+              />
+            ))}
+          </div>
+        )}
+
+        <form ref={stashFormRef} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className={labelC}>글 유형</span>
+              <select
+                name="structure_key"
+                className={fieldC}
+                defaultValue={r.structure_key || "free"}
+              >
+                {POST_TYPES.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={labelC}>협찬</span>
+              <select
+                name="sponsor_type"
+                className={fieldC}
+                defaultValue={r.sponsor_type || "내돈내산"}
+              >
+                {SPONSOR_TYPES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={labelC}>글 길이</span>
+              <select name="length" className={fieldC} defaultValue={String(r.length || 1500)}>
+                {POST_LENGTHS.map((n) => (
+                  <option key={n} value={n}>
+                    {n}자
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={labelC}>사진 노출</span>
+              <select
+                name="photo_style"
+                className={fieldC}
+                defaultValue={r.photo_style || "감성 중심"}
+              >
+                {PHOTO_STYLES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="flex flex-col gap-1">
+            <span className={labelC}>핵심 키워드 (비우면 AI가 제안)</span>
+            <input
+              name="keyword"
+              className={fieldC}
+              defaultValue={r.keyword || ""}
+              placeholder="예: 신당동 키즈카페"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className={labelC}>메모 — 최우선 반영</span>
+            <textarea
+              name="memo"
+              className={`${fieldC} min-h-28`}
+              defaultValue={r.memo || ""}
+              placeholder="오늘 있었던 일, 느낌, 꼭 담고 싶은 내용을 편하게 적어주세요."
+            />
+          </label>
+        </form>
+
+        <button
+          onClick={generateFromStash}
+          disabled={saving}
+          className="fixed inset-x-0 bottom-0 mx-auto max-w-lg bg-neutral-900 px-4 py-4 text-base font-semibold text-white disabled:opacity-50 sm:static sm:mt-4 sm:rounded-lg"
+        >
+          {saving ? "시작하는 중…" : "이 사진들로 초안 생성 🚀"}
+        </button>
       </main>
     );
   }

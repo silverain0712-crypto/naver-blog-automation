@@ -75,3 +75,19 @@ export async function createSignedUpload(path: string): Promise<string> {
   if (url.startsWith("/")) url = `${SUPABASE_URL}${url}`;
   return url;
 }
+
+// 보관 사진 미리보기용 — 저장된 이미지 경로들의 서명 다운로드 URL(절대 URL) 발급.
+export async function createSignedDownloads(
+  paths: string[],
+  expiresIn = 60 * 60,
+): Promise<string[]> {
+  if (paths.length === 0) return [];
+  const { data, error } = await supabase.storage
+    .from(SUPABASE_BUCKET)
+    .createSignedUrls(paths, expiresIn);
+  if (error || !data) throw new Error(`createSignedDownloads: ${error?.message}`);
+  return data.map((d) => {
+    const url = d.signedUrl ?? "";
+    return url.startsWith("/") ? `${SUPABASE_URL}${url}` : url;
+  });
+}

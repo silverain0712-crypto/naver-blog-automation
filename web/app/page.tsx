@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -103,6 +103,7 @@ export default function NewPostPage() {
   const [dragGuide, setDragGuide] = useState(false);
   const [learning, setLearning] = useState(false);
   const [learnMsg, setLearnMsg] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
 
   // PC 에서 드롭존 밖에 파일을 떨궜을 때 브라우저가 파일을 열어버리는 것 방지.
   useEffect(() => {
@@ -174,27 +175,18 @@ export default function NewPostPage() {
     setLearning(false);
   }
 
-  async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setErr("");
-    const fd = new FormData(e.currentTarget);
+  // 폼 값 + 첨부를 메타로 모은다(초안 생성 / 사진만 보관 공용).
+  function buildMeta() {
+    const form = formRef.current;
+    const fd = new FormData(form ?? undefined);
     const str = (k: string) => (fd.get(k) as string | null)?.trim() ?? "";
-
     const optional: Record<string, string> = {};
     for (const { key } of OPTIONAL_FIELDS) {
       const v = (fd.get(`opt_${key}`) as string | null)?.trim();
       if (v) optional[key] = v;
     }
-
-    if (!str("memo") && pics.length === 0) {
-      setErr("메모나 사진 중 하나는 넣어주세요.");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      // 1) 메타 저장 + 서명 업로드 URL 발급 (사진 MIME 도 함께 보내 GIF 는 .gif 로 저장)
-      const meta = {
+    return {
+      meta: {
         structure_key: str("structure_key"),
         keyword: str("keyword"),
         product_link: str("product_link"),
@@ -208,70 +200,112 @@ export default function NewPostPage() {
         photoMimes: pics.map((p) => p.file.type),
         guidelineNames: guideFiles.map((f) => f.name),
         guidelineText: guideText.trim(),
-      };
-      const res = await fetch("/api/drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(meta),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error ?? "생성 요청 실패");
-      }
-      const { id, uploads, guidelineUploads } = (await res.json()) as {
-        id: string;
-        uploads: { path: string; url: string }[];
-        guidelineUploads: { path: string; url: string }[];
-      };
+      },
+      memo: str("memo"),
+    };
+  }
 
-      // 2) 사진을 서명 URL 로 직접 업로드 (Vercel 함수 우회).
-      //    GIF: 애니메이션 유지 위해 원본 그대로. 그 외: 1600px JPEG 로 축소
-      //    (변환 실패 시 원본 폴백 → 맥이 처리).
-      for (let i = 0; i < uploads.length; i++) {
-        setProgress(`사진 업로드 ${i + 1}/${uploads.length}`);
-        const file = pics[i].file;
-        let body: Blob = file;
-        let contentType = file.type || "application/octet-stream";
-        if (file.type === "image/gif") {
-          contentType = "image/gif";
-        } else {
-          try {
-            body = await resizeImage(file);
-            contentType = "image/jpeg";
-          } catch {
-            /* 원본 업로드로 폴백 */
-          }
+  // 서명 URL 발급 → 사진/가이드 파일 직접 업로드(초안 생성 / 사진 보관 공용). 초안 id 반환.
+  async function uploadAssets(meta: Record<string, unknown>): Promise<string> {
+    const res = await fetch("/api/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(meta),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.error ?? "요청 실패");
+    }
+    const { id, uploads, guidelineUploads } = (await res.json()) as {
+      id: string;
+      uploads: { path: string; url: string }[];
+      guidelineUploads: { path: string; url: string }[];
+    };
+
+    // 사진을 서명 URL 로 직접 업로드(Vercel 함수 우회).
+    // GIF: 애니메이션 유지 위해 원본 그대로. 그 외: 1600px JPEG 로 축소(실패 시 원본 폴백).
+    for (let i = 0; i < uploads.length; i++) {
+      setProgress(`사진 업로드 ${i + 1}/${uploads.length}`);
+      const file = pics[i].file;
+      let body: Blob = file;
+      let contentType = file.type || "application/octet-stream";
+      if (file.type === "image/gif") {
+        contentType = "image/gif";
+      } else {
+        try {
+          body = await resizeImage(file);
+          contentType = "image/jpeg";
+        } catch {
+          /* 원본 업로드로 폴백 */
         }
-        const put = await fetch(uploads[i].url, {
-          method: "PUT",
-          headers: { "content-type": contentType },
-          body,
-        });
-        if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
       }
+      const put = await fetch(uploads[i].url, {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        body,
+      });
+      if (!put.ok) throw new Error(`사진 ${i + 1} 업로드 실패 (${put.status})`);
+    }
 
-      // 2-b) 협찬 가이드/제품 설명서 파일 업로드(원본 그대로 — 여러 개)
-      for (let i = 0; i < guidelineUploads.length; i++) {
-        setProgress(`가이드/설명서 업로드 ${i + 1}/${guidelineUploads.length}`);
-        const gf = guideFiles[i];
-        const put = await fetch(guidelineUploads[i].url, {
-          method: "PUT",
-          headers: { "content-type": gf.type || "application/octet-stream" },
-          body: gf,
-        });
-        if (!put.ok) throw new Error(`가이드/설명서 ${i + 1} 업로드 실패 (${put.status})`);
-      }
+    // 협찬 가이드/제품 설명서 파일 업로드(원본 그대로 — 여러 개)
+    for (let i = 0; i < guidelineUploads.length; i++) {
+      setProgress(`가이드/설명서 업로드 ${i + 1}/${guidelineUploads.length}`);
+      const gf = guideFiles[i];
+      const put = await fetch(guidelineUploads[i].url, {
+        method: "PUT",
+        headers: { "content-type": gf.type || "application/octet-stream" },
+        body: gf,
+      });
+      if (!put.ok) throw new Error(`가이드/설명서 ${i + 1} 업로드 실패 (${put.status})`);
+    }
+    return id;
+  }
 
-      // 3) 업로드 끝나면 생성 시작 상태로 전환
-      if (uploads.length > 0 || guidelineUploads.length > 0) {
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setErr("");
+    const { meta, memo } = buildMeta();
+    if (!memo && pics.length === 0) {
+      setErr("메모나 사진 중 하나는 넣어주세요.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const id = await uploadAssets(meta);
+      // 업로드가 있었으면 생성 시작 상태로 전환(사진/가이드 없으면 POST 가 이미 generating).
+      if (meta.photoCount || guideFiles.length > 0) {
         await fetch(`/api/drafts/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "generating" }),
         });
       }
-
       router.push(`/edit/${id}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+      setProgress("");
+    }
+  }
+
+  // 사진만 올려 보관 — 지금 글은 안 쓰고, 나중에 이 사진들로 초안을 생성한다.
+  async function saveStash() {
+    setErr("");
+    if (pics.length === 0) {
+      setErr("보관할 사진을 넣어주세요.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { meta } = buildMeta();
+      const id = await uploadAssets(meta);
+      // 생성기·워커가 건드리지 않는 정지 상태로 보관.
+      await fetch(`/api/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "photo_stash" }),
+      });
+      router.push("/list");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -302,7 +336,7 @@ export default function NewPostPage() {
         <p className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">{learnMsg}</p>
       )}
 
-      <form onSubmit={submit} className="flex flex-col gap-4">
+      <form ref={formRef} onSubmit={submit} className="flex flex-col gap-4">
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
             <span className={labelC}>글 유형</span>
@@ -431,6 +465,17 @@ export default function NewPostPage() {
             </div>
           )}
         </div>
+
+        {pics.length > 0 && (
+          <button
+            type="button"
+            onClick={saveStash}
+            disabled={busy}
+            className="rounded-lg border border-dashed border-neutral-400 bg-neutral-50 py-2.5 text-sm font-medium text-neutral-600 active:bg-neutral-100 disabled:opacity-50"
+          >
+            📥 사진만 저장 · 나중에 이 사진들로 글쓰기
+          </button>
+        )}
 
         <div className="flex flex-col gap-2">
           <span className={labelC}>

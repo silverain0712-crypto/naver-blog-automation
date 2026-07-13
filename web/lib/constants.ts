@@ -49,4 +49,6 @@ export const STATUS_LABEL: Record<string, string> = {
   error: "실패",
   ready: "대기",
   draft: "작성 중",
+  uploading: "업로드 중",
+  photo_stash: "사진 보관", // 사진만 올려둔 상태 — 나중에 이 사진들로 글 작성
 };
