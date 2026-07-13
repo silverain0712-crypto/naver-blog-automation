@@ -177,6 +177,7 @@ def generate_post(
     video_desc: str = "",
     guideline: str = "",
     research_notes: str = "",
+    benchmark_notes: str = "",
 ):
     structure = get_structure(structure_key)
     required_links = [l.strip() for l in (required_links or []) if l.strip()]
@@ -184,6 +185,7 @@ def generate_post(
     product_link = (product_link or "").strip()
     guideline = (guideline or "").strip()
     research_notes = (research_notes or "").strip()
+    benchmark_notes = (benchmark_notes or "").strip()
 
     # 키워드 유무에 따른 SEO 지침
     if keyword:
@@ -271,6 +273,25 @@ def generate_post(
     else:
         research_rule = ""
 
+    # 상위노출 벤치마킹 — 경쟁 상위글 구조 분석 + 차별화 포인트. 있으면 SEO 설계도로 주입.
+    if benchmark_notes:
+        benchmark_rule = (
+            "\n\n[상위노출 벤치마킹 — 이 글의 SEO 설계도. 아래 분석을 실제로 반영해 상위글을 이겨라]\n"
+            "아래는 이 주제의 네이버 블로그 '상위노출 글'들을 실제로 검색·분석한 결과다. 이대로 설계하라:\n"
+            "- [타깃 키워드]를 제목·도입부·소제목·본문에 자연스럽게 반영하라(핵심어 앞배치, 롱테일 병기).\n"
+            "- [제목 공식]을 참고해 title_candidates 를 만들되, 상위글을 그대로 베끼지 말고 같은 '공식'을 써라.\n"
+            "- [글 구조]의 공통 섹션·순서를 뼈대로 삼되, 비비의 실경험 톤으로 채워라.\n"
+            "- [필수 정보요소]는 하나도 빠뜨리지 마라(상위글이 다 담는 정보를 안 담으면 밀린다). "
+            "표로 정리하라고 짚은 항목은 실제로 표([표]...[/표])로 넣어라.\n"
+            "- [분량대]에 맞춰 충분히 쓰되 의미 없는 늘리기는 금지.\n"
+            "- [차별화 기회]가 이 글이 이기는 핵심이다 — 제안된 추가 정보·각도·표를 반드시 본문에 담아 "
+            "상위글보다 정보가 더 깊고 실용적이게 만들어라. 단 메모·사진에 없는 개인 경험은 지어내지 말고, "
+            "일반 정보는 '보통은/일반적으로'로 구분해 정확히 써라.\n"
+            + benchmark_notes
+        )
+    else:
+        benchmark_rule = ""
+
     system = (
         STYLE_RULES
         + "\n\n"
@@ -285,6 +306,7 @@ def generate_post(
         + brand_rule
         + guideline_rule
         + research_rule
+        + benchmark_rule
         + "\n\n[SEO — 네이버 상위 노출 최적화. SEO 전문가+블로그 컨설턴트로서 반드시 지켜라]\n"
         + keyword_rule
         + "\n- 제목(가장 중요): [세부 차별 키워드] + 핵심 키워드 + [후킹어]를 앞쪽에 배치하라. "

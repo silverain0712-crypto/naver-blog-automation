@@ -42,6 +42,10 @@ WRITER_MODEL = "claude-opus-4-8"
 RESEARCH_MODEL = "claude-sonnet-4-6"
 # 웹 검색 사실 보강 기능 on/off (끄면 리서치 단계 건너뜀). env 로 덮어쓸 수 있다.
 ENABLE_RESEARCH = os.getenv("ENABLE_RESEARCH", "1").strip() not in ("0", "false", "False", "")
+# 상위노출 벤치마킹(웹 검색으로 경쟁 상위글 구조 분석): 리서처와 같은 Sonnet.
+BENCHMARK_MODEL = "claude-sonnet-4-6"
+# 벤치마킹 기능 on/off (끄면 벤치마킹 단계 건너뜀). env 로 덮어쓸 수 있다.
+ENABLE_BENCHMARK = os.getenv("ENABLE_BENCHMARK", "1").strip() not in ("0", "false", "False", "")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 

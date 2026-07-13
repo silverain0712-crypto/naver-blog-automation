@@ -14,7 +14,7 @@ import time
 
 import config
 from modules import store
-from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher
+from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher, benchmark
 from prompts.post_structures import get_structure
 from modules.llm import _RETRYABLE
 
@@ -112,6 +112,16 @@ def generate(row: dict) -> None:
     if research_notes:
         print(f"  🔎 웹 리서치 사실 보강: {len(research_notes)}자")
 
+    # 상위노출 벤치마킹(자동 — 경쟁 상위글 구조 분석 + 차별화 포인트). 실패해도 생성은 계속.
+    benchmark_notes = benchmark.benchmark(
+        keyword=req.get("keyword", ""),
+        memo=req.get("memo", ""),
+        structure_label=(get_structure(structure_key) or {}).get("label", ""),
+        guideline=guideline_text,
+    )
+    if benchmark_notes:
+        print(f"  🏆 상위노출 벤치마킹: {len(benchmark_notes)}자")
+
     # app.py 와 동일 순서: 문체 가이드 → 사진 분석 → 초안 생성
     style_guide = style_profiler.load_style_guide()
     analysis = image_analyzer.analyze_images(images, structure_key, photo_style)
@@ -131,6 +141,7 @@ def generate(row: dict) -> None:
         video_desc="",
         guideline=guideline_text,
         research_notes=research_notes,
+        benchmark_notes=benchmark_notes,
     )
 
     titles = post.get("title_candidates") or ["(제목 미정)"]
