@@ -147,7 +147,7 @@ with st.expander("5. 추가 입력 (선택)"):
 
     s1, s2 = st.columns(2)
     with s1:
-        length = st.selectbox("글 길이(자)", config.POST_LENGTHS, index=1)
+        length = st.selectbox("글 길이(자)", config.POST_LENGTHS, index=0)
     with s2:
         photo_style = st.selectbox("사진 노출 방식", config.PHOTO_STYLES)
 
