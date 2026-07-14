@@ -738,7 +738,10 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     # 사진 자리는 '[사진N]' 마커를 텍스트 그대로(자기 문단) 남겨두고, PASS 2에서 그
     # 마커를 다시 '검색'해 실제 사진으로 교체한다. 이렇게 하면 사진 삽입이 커서를
     # 흔들어도 본문 텍스트가 유실되지 않고(유실 전파 없음), 사진도 제자리에 들어간다.
-    small_paths = _resize_for_upload(image_paths, log) if image_paths else []
+    inline_mode = getattr(config, "NAVER_PHOTO_INLINE", False)
+    # small_paths(리사이즈본)는 인라인 마커 교체(PASS2)에서만 쓴다. 결정적 모드는
+    # 끝모음(_insert_all_images)이 내부에서 리사이즈하므로 여기선 안 만든다.
+    small_paths = _resize_for_upload(image_paths, log) if (image_paths and inline_mode) else []
     inserted = 0
     used = set()    # 본문에서 참조된 사진 번호(마커로 남겨둔 것)
     failed = set()  # PASS 2 재삽입 실패 → 끝에 모아 업로드
@@ -802,51 +805,55 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     except Exception as e:
         log(f"자가진단 건너뜀: {str(e)[:40]}")
 
-    # ── PASS 2: [사진N] 마커를 실제 사진으로 교체한다. ──
-    # 각 사진마다 마커를 '텍스트로 다시 찾아' 삽입하므로, 한 사진에서 커서가 흔들려도
-    # 다음 사진은 새로 마커를 찾아 넣는다(유실 전파 없음).
-    for n in sorted(used):
-        try:
-            _dismiss_continue_popup(frame, log)
-            # '[사진N]'만 든 문단을 query_selector_all 로 훑어 '정확히 일치'하는 걸 집는다.
-            # text_content() 사용(중요): inner_text() 는 '화면에 보이는' 텍스트만 반환해
-            # 스크롤 밖 마커가 ""로 나와 매칭 실패 → 실행마다 결과가 달라지던 근본 원인.
-            # text_content 는 가시성 무관 원본 DOM 텍스트라 모든 마커를 찾는다.
-            # ('사진2'가 '사진21'에 걸리는 것도 == 정확 비교라 방지됨.)
-            handle = None
-            for el in frame.query_selector_all(".se-text-paragraph"):
-                try:
-                    if (el.text_content() or "").strip() == f"[사진{n}]":
-                        handle = el
-                        break
-                except Exception:
-                    continue
-            if handle is None:
-                raise RuntimeError("마커 문단 못 찾음")
-            # 긴 글에서 화면 밖 문단도 클릭되게 JS 로 먼저 스크롤(스크롤 API 타임아웃 회피).
+    # ── PASS 2: 사진 배치 ──
+    if inline_mode:
+        # (best-effort) [사진N] 마커를 '텍스트로 다시 찾아' 실제 사진으로 교체 시도.
+        # 네이버 에디터가 불안정해 실행마다 일부만 성공 → 실패분은 아래 끝모음으로.
+        for n in sorted(used):
             try:
-                handle.evaluate("el => el.scrollIntoView({block: 'center'})")
-                time.sleep(0.15)
-            except Exception:
-                pass
-            handle.click(timeout=4000, force=True)
-            # 마커 텍스트를 통째로 선택해 지우고(빈 문단) 그 자리에 사진을 넣는다.
-            kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
-            _insert_image(frame, page, [small_paths[n - 1]], log)
-            inserted += 1
-        except Exception as e:
-            log(f"  사진{n} 재삽입 실패({str(e)[:45]}) → 마커 유지, 끝에 업로드")
-            failed.add(n)
+                _dismiss_continue_popup(frame, log)
+                # '[사진N]'만 든 문단을 query_selector_all 로 훑어 '정확히 일치'하는 걸 집는다.
+                # text_content()(가시성 무관 원본 DOM 텍스트)로 비교 — inner_text 는 화면 밖
+                # 문단이 ""로 나와 매칭 실패. '사진2'가 '사진21'에 걸리는 것도 == 로 방지.
+                handle = None
+                for el in frame.query_selector_all(".se-text-paragraph"):
+                    try:
+                        if (el.text_content() or "").strip() == f"[사진{n}]":
+                            handle = el
+                            break
+                    except Exception:
+                        continue
+                if handle is None:
+                    raise RuntimeError("마커 문단 못 찾음")
+                try:
+                    handle.evaluate("el => el.scrollIntoView({block: 'center'})")
+                    time.sleep(0.15)
+                except Exception:
+                    pass
+                handle.click(timeout=4000, force=True)
+                kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
+                _insert_image(frame, page, [small_paths[n - 1]], log)
+                inserted += 1
+            except Exception as e:
+                log(f"  사진{n} 재삽입 실패({str(e)[:45]}) → 마커 유지, 끝에 업로드")
+                failed.add(n)
+        # 참조 안 됐거나 재삽입 실패한 사진만 끝에 모은다.
+        leftover = [image_paths[n - 1] for n in range(1, len(image_paths) + 1)
+                    if n not in used or n in failed]
+        header = "(아래 사진은 자동 배치되지 않았어요. 원하는 위치로 끌어다 놓으세요.)"
+    else:
+        # (결정적·기본) 마커 교체는 네이버 에디터 불안정으로 실행마다 결과가 달라져서
+        # 아예 안 한다. 본문의 '[사진N]' 글자 마커를 '자리 안내'로 그대로 두고, 모든 사진을
+        # 순서대로(1..N) 글 끝에 모은다 → 사용자가 번호 자리로 드래그(결과가 항상 동일).
+        leftover = list(image_paths)
+        header = "▶ 아래 사진을 본문의 [사진N] 번호 자리로 끌어다 놓으세요 (순서대로 1, 2, 3 …)"
 
-    # 본문에서 참조 안 됐거나 재삽입 실패한 사진만 끝에 모아 올린다.
-    leftover = [image_paths[n - 1] for n in range(1, len(image_paths) + 1)
-                if n not in used or n in failed]
     if leftover:
         _focus_body_end(frame, log)
         kb.press("Enter"); kb.press("Enter")
         _insert_divider(frame, log, "line6")
         body_on(); gray_on()
-        _type_lines(kb, "(아래 사진은 자동 배치되지 않았어요. 원하는 위치로 끌어다 놓으세요.)")
+        _type_lines(kb, header)
         kb.press("Enter"); body_on()
         try:
             inserted += _insert_all_images(frame, page, leftover, log)
@@ -860,7 +867,9 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         _type_lines(kb, " ".join(f"#{t}" for t in tags))
         log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
 
-    log(f"본문 입력 완료. 사진 {inserted}장 삽입(자리 {len(used) - len(failed)}장), "
+    mode_desc = (f"인라인 자리 {len(used) - len(failed)}장 + 끝모음"
+                 if inline_mode else "결정적(전부 끝모음, 본문에 [사진N] 안내)")
+    log(f"본문 입력 완료. 사진 {inserted}장 삽입({mode_desc}), "
         f"소제목 {len(sub_set)}개 스타일, 해시태그 {len(tags)}개.")
     return True
 

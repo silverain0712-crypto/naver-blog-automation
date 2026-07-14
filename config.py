@@ -46,6 +46,10 @@ ENABLE_RESEARCH = os.getenv("ENABLE_RESEARCH", "1").strip() not in ("0", "false"
 BENCHMARK_MODEL = "claude-sonnet-4-6"
 # 벤치마킹 기능 on/off (끄면 벤치마킹 단계 건너뜀). env 로 덮어쓸 수 있다.
 ENABLE_BENCHMARK = os.getenv("ENABLE_BENCHMARK", "1").strip() not in ("0", "false", "False", "")
+# 네이버 사진 배치 방식. 기본 0(결정적): 마커 교체 안 하고 [사진N] 글자 마커를 자리 안내로
+# 남긴 뒤 모든 사진을 순서대로 글 끝에 모아 사용자가 드래그. 1이면 best-effort 인라인 시도
+# (네이버 에디터가 불안정해 실행마다 결과가 달라짐).
+NAVER_PHOTO_INLINE = os.getenv("NAVER_PHOTO_INLINE", "0").strip() in ("1", "true", "True")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 
