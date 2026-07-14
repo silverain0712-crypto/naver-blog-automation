@@ -79,9 +79,18 @@ def _collect_guideline(req: dict) -> str:
 
 
 def generate(row: dict) -> None:
-    req = (row.get("data") or {}).get("request") or {}
+    data0 = row.get("data") or {}
+    req = data0.get("request") or {}
     structure_key = req.get("structure_key", "free")
     photo_style = req.get("photo_style", config.PHOTO_STYLES[0])
+
+    # 수정 재생성: 폰에서 '수정 요청'을 넣으면 data.revision_request 에 담겨 온다.
+    # 이 경우 기존 초안(body)을 토대로 요청만 반영해 다시 쓴다(리서치·벤치마킹은 이미
+    # 반영돼 있으므로 건너뛰어 빠르게). 처리 후 새 data 에는 안 담겨 자동으로 비워진다.
+    revision_request = (data0.get("revision_request") or "").strip()
+    previous_body = row.get("body", "") if revision_request else ""
+    if revision_request:
+        print(f"  ✏️ 수정 요청 반영 재생성: {revision_request[:60]}")
 
     images = _download_images(row)
 
@@ -103,7 +112,8 @@ def generate(row: dict) -> None:
         print(f"  📋 가이드/설명서 반영: {len(guideline_text)}자")
 
     # 웹 검색으로 사실 보강(자동 — 모델이 필요할 때만 검색). 실패해도 생성은 계속.
-    research_notes = researcher.research(
+    # 수정 재생성이면 이미 반영돼 있으므로 건너뛴다(빠르게 요청만 반영).
+    research_notes = "" if revision_request else researcher.research(
         keyword=req.get("keyword", ""),
         memo=req.get("memo", ""),
         structure_label=(get_structure(structure_key) or {}).get("label", ""),
@@ -113,7 +123,7 @@ def generate(row: dict) -> None:
         print(f"  🔎 웹 리서치 사실 보강: {len(research_notes)}자")
 
     # 상위노출 벤치마킹(자동 — 경쟁 상위글 구조 분석 + 차별화 포인트). 실패해도 생성은 계속.
-    benchmark_notes = benchmark.benchmark(
+    benchmark_notes = "" if revision_request else benchmark.benchmark(
         keyword=req.get("keyword", ""),
         memo=req.get("memo", ""),
         structure_label=(get_structure(structure_key) or {}).get("label", ""),
@@ -142,6 +152,8 @@ def generate(row: dict) -> None:
         guideline=guideline_text,
         research_notes=research_notes,
         benchmark_notes=benchmark_notes,
+        revision_request=revision_request,
+        previous_body=previous_body,
     )
 
     titles = post.get("title_candidates") or ["(제목 미정)"]

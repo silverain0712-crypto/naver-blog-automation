@@ -29,6 +29,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const [saving, setSaving] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [stashUrls, setStashUrls] = useState<string[]>([]); // 보관 사진 미리보기 URL
+  const [revisionReq, setRevisionReq] = useState(""); // 초안 확인 후 수정 요청
   const editedRef = useRef(false); // 사용자가 편집을 시작하면 폴링이 덮어쓰지 않게
   const stashFormRef = useRef<HTMLFormElement>(null);
 
@@ -93,6 +94,29 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     else if (res.ok) editedRef.current = false;
   }
 
+  // 초안 확인 후 수정 요청 → 기존 초안 + 요청을 맥에 보내 다시 쓰게 한다(status='generating').
+  async function requestRevision() {
+    const text = revisionReq.trim();
+    if (!text) return;
+    setSaving(true);
+    const res = await fetch(`/api/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title, // 사용자가 고른/고친 제목·본문을 기준으로 수정
+        body,
+        data: { ...(draft?.data ?? {}), revision_request: text },
+        status: "generating",
+      }),
+    });
+    setSaving(false);
+    if (res.ok) {
+      setRevisionReq("");
+      editedRef.current = false;
+      load(); // status 가 generating 으로 바뀌면 폴링 useEffect 가 다시 돌아 완성본을 보여줌
+    }
+  }
+
   // 보관해둔 사진으로 초안 생성 시작 — 폼 값을 request 에 합쳐 status='generating' 전환.
   async function generateFromStash() {
     const fd = new FormData(stashFormRef.current ?? undefined);
@@ -146,10 +170,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     return (
       <main className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center gap-4 p-6 text-center">
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-neutral-200 border-t-neutral-800" />
-        <p className="font-medium">맥에서 초안을 쓰는 중이에요…</p>
+        <p className="font-medium">
+          {d.revision_request ? "맥이 수정 요청을 반영해 다시 쓰는 중이에요…" : "맥에서 초안을 쓰는 중이에요…"}
+        </p>
         <p className="text-sm text-neutral-500">
-          문체 학습 + 사진 분석 + 본문 작성. 보통 20~40초 걸려요.
-          <br />맥이 깨어 있어야 진행됩니다.
+          {d.revision_request ? (
+            <>요청: “{String(d.revision_request).slice(0, 60)}”<br />맥이 깨어 있어야 진행됩니다.</>
+          ) : (
+            <>문체 학습 + 사진 분석 + 본문 작성. 보통 20~40초 걸려요.<br />맥이 깨어 있어야 진행됩니다.</>
+          )}
         </p>
         <Link href="/list" className="text-sm text-blue-600">
           목록으로
@@ -372,6 +401,27 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       {hashtags.length > 0 && (
         <p className="mt-3 text-xs text-neutral-500">#{hashtags.join(" #")}</p>
       )}
+
+      <div className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+        <p className="mb-1 text-sm font-medium text-neutral-700">✏️ 수정 요청</p>
+        <p className="mb-2 text-xs text-neutral-400">
+          고치고 싶은 점을 적어주세요. 맥이 이 초안을 바탕으로 요청만 반영해 다시 써요.
+          <br />예: “도입부를 더 공감되게”, “가격 표 하나 추가”, “너무 광고 같은 문장 빼줘”.
+        </p>
+        <textarea
+          value={revisionReq}
+          onChange={(e) => setRevisionReq(e.target.value)}
+          placeholder="수정 요청 입력…"
+          className="min-h-20 w-full rounded-lg border border-neutral-300 px-3 py-2 text-base"
+        />
+        <button
+          onClick={requestRevision}
+          disabled={saving || !revisionReq.trim()}
+          className="mt-2 w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {saving ? "요청 보내는 중…" : "🔄 수정 요청해서 다시 쓰기"}
+        </button>
+      </div>
 
       <div className="fixed inset-x-0 bottom-0 mx-auto flex max-w-lg gap-2 bg-white/90 p-3 backdrop-blur">
         <button

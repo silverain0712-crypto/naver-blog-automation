@@ -178,6 +178,8 @@ def generate_post(
     guideline: str = "",
     research_notes: str = "",
     benchmark_notes: str = "",
+    revision_request: str = "",
+    previous_body: str = "",
 ):
     structure = get_structure(structure_key)
     required_links = [l.strip() for l in (required_links or []) if l.strip()]
@@ -186,6 +188,8 @@ def generate_post(
     guideline = (guideline or "").strip()
     research_notes = (research_notes or "").strip()
     benchmark_notes = (benchmark_notes or "").strip()
+    revision_request = (revision_request or "").strip()
+    previous_body = (previous_body or "").strip()
 
     # 키워드 유무에 따른 SEO 지침
     if keyword:
@@ -292,6 +296,23 @@ def generate_post(
     else:
         benchmark_rule = ""
 
+    # 수정 재생성 — 폰에서 초안 확인 후 넣은 '수정 요청'. 있으면 기존 초안을 토대로
+    # 요청만 정확히 반영해 다시 쓰게 한다(최우선). 나머지는 유지.
+    if revision_request:
+        revision_rule = (
+            "\n\n[⚠ 수정 재생성 — 최우선. 이건 새 글이 아니라 '기존 초안'의 수정본이다]\n"
+            "아래 [기존 초안]을 토대로 [사용자 수정 요청]을 정확히 반영해 전체 본문을 다시 써라.\n"
+            "- 요청한 부분만 바꾸고, 나머지 좋은 내용·구조·정보·문체·분량은 최대한 그대로 유지하라.\n"
+            "- 사진 자리 [사진N]·[영상N] 마커와 표는 특별한 요청이 없으면 기존과 같은 개수·위치로 유지.\n"
+            "- 요청이 특정 부분(제목·특정 문단·표·톤·특정 정보 등)에 관한 거면 그 부분만 정확히 손대라.\n"
+            "- 사용자가 이미 초안을 봤으니, 요청과 무관한 문장을 이유 없이 갈아엎지 마라.\n"
+            "- 출력 형식(body, title_candidates, subheadings, hashtags 등)은 평소와 완전히 동일하게.\n"
+            f"\n[사용자 수정 요청]\n{revision_request}\n"
+            f"\n[기존 초안]\n{previous_body}\n"
+        )
+    else:
+        revision_rule = ""
+
     system = (
         STYLE_RULES
         + "\n\n"
@@ -307,6 +328,7 @@ def generate_post(
         + guideline_rule
         + research_rule
         + benchmark_rule
+        + revision_rule
         + "\n\n[SEO — 네이버 상위 노출 최적화. SEO 전문가+블로그 컨설턴트로서 반드시 지켜라]\n"
         + keyword_rule
         + "\n- 제목(가장 중요): [세부 차별 키워드] + 핵심 키워드 + [후킹어]를 앞쪽에 배치하라. "
