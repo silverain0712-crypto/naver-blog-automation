@@ -618,6 +618,70 @@ def _insert_all_images(frame, page, paths, log):
     return done
 
 
+def _find_marker_paragraph(frame, n):
+    """본문에서 '[사진N]' 텍스트만 정확히 든 문단 element handle 을 찾는다(없으면 None).
+    text_content() 로 비교해 화면 밖 문단도 잡고, '==' 로 사진2/사진21 오매칭을 막는다."""
+    for el in frame.query_selector_all(".se-text-paragraph"):
+        try:
+            if (el.text_content() or "").strip() == f"[사진{n}]":
+                return el
+        except Exception:
+            continue
+    return None
+
+
+def _para_text_styled(frame, text, min_px=17, min_weight=600):
+    """본문에서 text 와 정확히 일치하는 문단을 찾아 실제 글자 크기/굵기를 읽어,
+    본문(15px/400)보다 크거나 볼드면 True. (커서 기준이 아니라 텍스트로 문단을 찾으므로
+    드롭다운 클릭으로 커서가 밀려도 정확히 검증된다.)"""
+    try:
+        for el in frame.query_selector_all(".se-text-paragraph"):
+            if (el.text_content() or "").strip() != text:
+                continue
+            fs = el.evaluate(
+                "e => { const t = e.querySelector('span') || e;"
+                " const s = getComputedStyle(t); return s.fontSize + '|' + s.fontWeight; }"
+            )
+            px_s, wt_s = (fs or "0px|400").split("|")
+            px = float(px_s.replace("px", "") or 0)
+            wt = int(wt_s) if wt_s.isdigit() else (700 if wt_s == "bold" else 400)
+            return px >= min_px or wt >= min_weight
+        return False
+    except Exception:
+        return False
+
+
+def _apply_sub_style(frame, page, sub_on, norm, log):
+    """안정된 문서에서 소제목 문단을 '실제 클릭→키보드 선택→스타일' 로 입히고, 텍스트로
+    실제 적용됐는지 확인해 안 먹었으면 재시도(최대 3회). JS Range 선택은 네이버 툴바가
+    무시하므로 실제 클릭+키보드 선택을 쓴다."""
+    kb = page.keyboard
+    for attempt in range(3):
+        handle = None
+        for el in frame.query_selector_all(".se-text-paragraph"):
+            if (el.text_content() or "").strip() == norm:
+                handle = el
+                break
+        if handle is None:
+            return False
+        try:
+            handle.evaluate("e => e.scrollIntoView({block: 'center'})")
+            time.sleep(0.1)
+            handle.click(timeout=3000, force=True)
+        except Exception:
+            time.sleep(0.2)
+            continue
+        kb.press("Home"); kb.press("Shift+End")   # 줄 전체 선택(네이버가 인식하는 실제 선택)
+        time.sleep(0.1)
+        sub_on()                                   # 선택 영역에 나눔명조19 볼드 적용
+        kb.press("End")
+        if _para_text_styled(frame, norm):
+            return True
+        time.sleep(0.2)
+    log(f"  (소제목 스타일 실패: {norm[:16]})")
+    return False
+
+
 def _focus_body_end(frame, log=None):
     """이미지 삽입 뒤 커서가 편집영역을 벗어나면 이후 타이핑이 통째로 유실된다
     (네이버 에디터 변경으로 '삽입 후 커서가 이미지 뒤에 남는다'는 가정이 깨짐).
@@ -739,9 +803,11 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     # 마커를 다시 '검색'해 실제 사진으로 교체한다. 이렇게 하면 사진 삽입이 커서를
     # 흔들어도 본문 텍스트가 유실되지 않고(유실 전파 없음), 사진도 제자리에 들어간다.
     inline_mode = getattr(config, "NAVER_PHOTO_INLINE", False)
+    rearrange_mode = getattr(config, "NAVER_PHOTO_REARRANGE", False)
     # small_paths(리사이즈본)는 인라인 마커 교체(PASS2)에서만 쓴다. 결정적 모드는
     # 끝모음(_insert_all_images)이 내부에서 리사이즈하므로 여기선 안 만든다.
-    small_paths = _resize_for_upload(image_paths, log) if (image_paths and inline_mode) else []
+    small_paths = (_resize_for_upload(image_paths, log)
+                   if (image_paths and (inline_mode or rearrange_mode)) else [])
     inserted = 0
     used = set()    # 본문에서 참조된 사진 번호(마커로 남겨둔 것)
     failed = set()  # PASS 2 재삽입 실패 → 끝에 모아 업로드
@@ -782,9 +848,11 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             body_lines = tok.split("\n")
             for i, line in enumerate(body_lines):
                 norm = _strip_bullet(line)
+                # 소제목도 PASS1 에선 '본문 스타일 그대로 텍스트만' 넣는다. 스타일은 본문이
+                # 다 입력된 뒤(안정된 상태) 아래 별도 패스에서 JS 선택으로 입힌다 — 타이핑
+                # 중에 입히면 이후 입력이 스타일을 흔들어 실행마다 일부만 먹던 문제 해결.
                 if norm and norm in sub_set:
-                    # 소제목: ● 등 불릿 제거 + 나눔명조 19 검정 볼드
-                    sub_on(); _insert_text_safe(kb, norm); body_on()
+                    _insert_text_safe(kb, norm)
                 elif line:
                     _insert_text_safe(kb, line)
                 if i < len(body_lines) - 1:
@@ -804,6 +872,39 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         log(f"자가진단(PASS1 텍스트): 에디터 {got}자 / 예상 {expect}자 {mark}")
     except Exception as e:
         log(f"자가진단 건너뜀: {str(e)[:40]}")
+
+    # ── 소제목 스타일링 패스 ── 본문 텍스트가 모두 안정된 지금, 소제목만 JS 로 정확히
+    # 선택해 나눔명조19 볼드를 입힌다(타이핑 중이 아니라 이후 입력이 스타일을 흔들지 않음).
+    if sub_set:
+        done_sub = 0
+        for norm in sub_set:
+            if _apply_sub_style(frame, page, sub_on, norm, log):
+                done_sub += 1
+        _focus_body_end(frame, log); body_on()
+        log(f"소제목 스타일링 패스: {done_sub}/{len(sub_set)}개 적용")
+
+    # 소제목이 실제로 '본문과 구분되는 스타일'을 먹었는지 컴퓨티드 스타일로 검증한다.
+    # (스타일이 안 먹으면 소제목이 본문과 똑같이 보여 '안 넘어온 것처럼' 느껴짐)
+    if sub_set:
+        try:
+            styled = 0
+            for el in frame.query_selector_all(".se-text-paragraph"):
+                if (el.text_content() or "").strip() not in sub_set:
+                    continue
+                fs = el.evaluate(
+                    "e => { const t = e.querySelector('span') || e;"
+                    " const s = getComputedStyle(t);"
+                    " return s.fontSize + '|' + s.fontWeight; }"
+                )
+                px_s, wt_s = (fs or "0px|400").split("|")
+                px = float(px_s.replace("px", "") or 0)
+                wt = int(wt_s) if wt_s.isdigit() else (700 if wt_s == "bold" else 400)
+                if px >= 17 or wt >= 600:   # 본문(15px/400)보다 크거나 볼드면 스타일 먹은 것
+                    styled += 1
+            log(f"소제목 실제 스타일 확인: {styled}/{len(sub_set)}개 적용됨"
+                + ("" if styled >= len(sub_set) else " ⚠ 일부 미적용"))
+        except Exception as e:
+            log(f"소제목 스타일 확인 건너뜀: {str(e)[:40]}")
 
     # ── PASS 2: 사진 배치 ──
     if inline_mode:
@@ -841,6 +942,41 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         leftover = [image_paths[n - 1] for n in range(1, len(image_paths) + 1)
                     if n not in used or n in failed]
         header = "(아래 사진은 자동 배치되지 않았어요. 원하는 위치로 끌어다 놓으세요.)"
+    elif rearrange_mode:
+        # (옵션1·재배치) 각 [사진N] 마커 자리에 커서를 놓고 '그 자리'에 사진을 바로 업로드한다.
+        # 네이버 자체 DnD 는 커스텀이라 자동 드래그가 안 먹어서(진단으로 확인), 대신 공식
+        # '커서 위치 사진 삽입' 기능만 쓴다 → 사람 손 없이 제자리 배치, 실패분만 끝모음.
+        placed = 0
+        for n in sorted(used):
+            ok = False
+            for attempt in range(2):
+                try:
+                    _dismiss_continue_popup(frame, log)
+                    handle = _find_marker_paragraph(frame, n)
+                    if handle is None:
+                        raise RuntimeError("마커 문단 못 찾음")
+                    handle.evaluate("el => el.scrollIntoView({block: 'center'})")
+                    time.sleep(0.2)
+                    handle.click(timeout=4000, force=True)
+                    # 마커 텍스트('[사진N]')만 지우고 그 빈 자리(커서)에 사진 삽입.
+                    kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
+                    _insert_image(frame, page, [small_paths[n - 1]], log)
+                    inserted += 1; placed += 1; ok = True
+                    log(f"  사진{n}: 마커 자리에 삽입 완료")
+                    break
+                except Exception as e:
+                    log(f"  사진{n} 삽입 재시도({attempt + 1}/2): {str(e)[:45]}")
+                    _focus_body_end(frame, log)
+                    time.sleep(0.5)
+            if not ok:
+                failed.add(n)
+                log(f"  사진{n}: 마커 자리 삽입 실패 → 끝모음으로 이동")
+        log(f"마커 자리 삽입: {placed}/{len(used)}장 제자리 배치"
+            + ("" if placed == len(used) else " (실패분은 글 끝에 모아둠)"))
+        # 참조 안 됐거나 삽입 실패한 사진만 끝에 모은다.
+        leftover = [image_paths[n - 1] for n in range(1, len(image_paths) + 1)
+                    if n not in used or n in failed]
+        header = "(아래 사진은 자동 배치되지 않았어요. 원하는 위치로 끌어다 놓으세요.)"
     else:
         # (결정적·기본) 마커 교체는 네이버 에디터 불안정으로 실행마다 결과가 달라져서
         # 아예 안 한다. 본문의 '[사진N]' 글자 마커를 '자리 안내'로 그대로 두고, 모든 사진을
@@ -867,8 +1003,12 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         _type_lines(kb, " ".join(f"#{t}" for t in tags))
         log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
 
-    mode_desc = (f"인라인 자리 {len(used) - len(failed)}장 + 끝모음"
-                 if inline_mode else "결정적(전부 끝모음, 본문에 [사진N] 안내)")
+    if inline_mode:
+        mode_desc = f"인라인 자리 {len(used) - len(failed)}장 + 끝모음"
+    elif rearrange_mode:
+        mode_desc = f"재배치(마커 자리 삽입 {len(used) - len(failed)}장 + 실패분 끝모음)"
+    else:
+        mode_desc = "결정적(전부 끝모음, 본문에 [사진N] 안내)"
     log(f"본문 입력 완료. 사진 {inserted}장 삽입({mode_desc}), "
         f"소제목 {len(sub_set)}개 스타일, 해시태그 {len(tags)}개.")
     return True

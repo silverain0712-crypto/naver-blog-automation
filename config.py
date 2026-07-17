@@ -50,6 +50,12 @@ ENABLE_BENCHMARK = os.getenv("ENABLE_BENCHMARK", "1").strip() not in ("0", "fals
 # 남긴 뒤 모든 사진을 순서대로 글 끝에 모아 사용자가 드래그. 1이면 best-effort 인라인 시도
 # (네이버 에디터가 불안정해 실행마다 결과가 달라짐).
 NAVER_PHOTO_INLINE = os.getenv("NAVER_PHOTO_INLINE", "0").strip() in ("1", "true", "True")
+# 1이면 '재배치 모드': 본문 텍스트를 먼저 전부 넣은 뒤, 각 [사진N] 마커 자리에 커서를
+# 놓고 그 자리에 사진을 바로 업로드한다(네이버 공식 '커서 위치 삽입'만 사용 — 자체 커스텀
+# DnD 라 자동 드래그는 안 먹는 걸 확인함). 삽입 실패분만 글 끝에 모으므로 최악의 경우가
+# 결정적 모드와 동일해 안전하다. inline 모드보다 우선. (기본 ON — 간단글·실제 복잡글
+# 25장/표/소제목 모두 제자리 배치 검증됨. 끄려면 NAVER_PHOTO_REARRANGE=0)
+NAVER_PHOTO_REARRANGE = os.getenv("NAVER_PHOTO_REARRANGE", "1").strip() in ("1", "true", "True")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 
