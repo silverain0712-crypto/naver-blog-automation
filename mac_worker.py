@@ -10,6 +10,10 @@
 
 import datetime
 import json
+import os
+import re
+import signal
+import subprocess
 import time
 
 import config
@@ -17,6 +21,94 @@ from modules import store
 from modules.naver_blog_writer import run_job
 
 POLL_SECONDS = 30
+# 크롬 프로필(~/.naver_blog_automation/userdata)은 잡 하나만 쓸 수 있다. 다른 naver_run.py 가
+# 이 시간보다 오래 떠 있으면 죽은 잡으로 보고 정리한다(정상 잡은 보통 몇 분 안에 끝난다).
+STALE_JOB_SECONDS = 30 * 60
+
+
+def _parse_etime(etime: str) -> int:
+    """ps 의 ELAPSED([[dd-]hh:]mm:ss)를 초로 바꾼다. macOS ps 는 etimes 를 지원하지 않는다."""
+    m = re.match(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$", etime.strip())
+    if not m:
+        return 0
+    days, hours, mins, secs = (int(g or 0) for g in m.groups())
+    return ((days * 24 + hours) * 60 + mins) * 60 + secs
+
+
+def _running_naver_jobs() -> list[tuple[int, int]]:
+    """돌고 있는 다른 naver_run.py 프로세스의 (pid, 경과초) 목록."""
+    try:
+        out = subprocess.run(["ps", "-eo", "pid,etime,command"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception as e:
+        print(f"  프로세스 확인 실패(가드 건너뜀): {e}")
+        return []
+
+    me = os.getpid()
+    jobs = []
+    for line in out.splitlines()[1:]:
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid = int(parts[0])
+        if pid != me and _is_naver_run(parts[2]):
+            jobs.append((pid, _parse_etime(parts[1])))
+    return jobs
+
+
+def _is_naver_run(command: str) -> bool:
+    """'python ... naver_run.py' 형태인지 본다.
+
+    명령줄 전체에 부분문자열로 찾으면 이 스크립트를 열어둔 편집기나, 명령줄에 경로가
+    섞인 셸까지 걸려서 엉뚱한 프로세스를 죽이게 된다.
+    """
+    argv = command.split()
+    if not argv or not os.path.basename(argv[0]).lower().startswith("python"):
+        return False
+    return any(a.endswith("naver_run.py") for a in argv[1:])
+
+
+def _profile_is_free() -> bool:
+    """크롬 프로필이 비었는지 확인하고, 멈춰 있는 잡은 정리한다.
+
+    다른 잡이 아직 정상 실행 중이면 False 를 돌려 이번 폴링을 건너뛴다. 같은 프로필을
+    두 잡이 동시에 물면 브라우저가 닫혀 'Target page ... has been closed' 로 실패한다.
+    """
+    jobs = _running_naver_jobs()
+    if not jobs:
+        return True
+
+    live = [(pid, age) for pid, age in jobs if age < STALE_JOB_SECONDS]
+    for pid, age in jobs:
+        if age >= STALE_JOB_SECONDS:
+            print(f"  멈춘 잡 정리: pid {pid} ({age // 60}분째) — 종료합니다.")
+            _kill(pid)
+
+    if live:
+        pid, age = live[0]
+        print(f"  다른 네이버 잡 실행 중(pid {pid}, {age // 60}분째) — 이번 차례는 건너뜁니다.")
+        return False
+    return True
+
+
+def _kill(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except Exception as e:
+        print(f"    종료 실패: {e}")
+        return
+    for _ in range(10):
+        time.sleep(0.5)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
 
 
 def _build_job_dir(row: dict):
@@ -72,6 +164,8 @@ def main():
             rows = store.list_drafts("queued")
             for row in rows:
                 title = row.get("title", "")[:30]
+                if not _profile_is_free():
+                    break  # queued 로 두고 다음 폴링에서 다시 시도한다
                 print(f"\n[{datetime.datetime.now():%H:%M:%S}] 처리 시작: {title}")
                 store.update_draft(row["id"], {"status": "posting"})
                 try:
