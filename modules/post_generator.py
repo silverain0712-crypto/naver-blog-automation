@@ -18,6 +18,7 @@ from prompts.post_structures import get_structure
 from prompts.style_rules import STYLE_RULES, sponsor_instruction
 from prompts.edit_lessons import EDIT_LESSONS
 from prompts.geo_structure import GEO_STRUCTURE
+from prompts.naeo_rules import NAEO_RULES
 
 _POST_SCHEMA = {
     "type": "object",
@@ -319,6 +320,8 @@ def generate_post(
         + EDIT_LESSONS
         + "\n\n"
         + GEO_STRUCTURE
+        + "\n\n"
+        + NAEO_RULES
         + "\n\n"
         + profile_to_prompt(style_guide)
         + "\n\n"
