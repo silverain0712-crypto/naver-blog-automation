@@ -28,9 +28,22 @@ def main():
                 cookies = ctx.cookies()
             except Exception:
                 cookies = []
-            if any(c.get("name") in ("NID_AUT", "NID_SES") for c in cookies):
+            # NID_SES 는 로그인 페이지만 열어도 일찍 생겨서, 이걸로 판정하면 인증 완료 전에
+            # 성공으로 오인한다. 실제 인증 토큰은 NID_AUT 다 — 이게 있어야 글쓰기 페이지가 통과된다.
+            if any(c.get("name") == "NID_AUT" for c in cookies):
                 ok = True
                 break
+        # NID_AUT 가 잡혀도 실제 글쓰기 페이지가 로그인으로 튕기지 않는지 최종 확인한다.
+        if ok:
+            try:
+                page.goto("https://blog.naver.com/bbnation?Redirect=Write",
+                          wait_until="domcontentloaded", timeout=30000)
+                time.sleep(2)
+                if "nid.naver.com" in page.url:
+                    ok = False
+                    print("⚠️ 쿠키는 있으나 글쓰기 페이지가 로그인으로 튕깁니다. 로그인을 완전히 끝내주세요.")
+            except Exception:
+                pass
         time.sleep(2)
         ctx.close()
     print("✅ 로그인 세션 저장 완료. 이제 워커를 켜면 됩니다." if ok
