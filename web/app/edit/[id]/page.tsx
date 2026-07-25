@@ -158,6 +158,10 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const d = draft.data ?? {};
   const titleCandidates: string[] = d.title_candidates ?? [];
   const hashtags: string[] = d.hashtags ?? [];
+  // AI가 정한 키워드(맨 앞이 메인). keyword_stats 는 나중에 검색량/문서수를 채우면 자동 표시된다.
+  const suggestedKeywords: string[] = d.suggested_keywords ?? [];
+  const kwStats: Record<string, { volume?: number; docs?: number }> =
+    d.keyword_stats ?? {};
   const confirmNeeded: { item: string; note: string }[] = d.confirm_needed ?? [];
   const targetLen: number = d.request?.length ?? 0;
   const guidelineName: string = d.request?.guideline_name ?? "";
@@ -395,6 +399,46 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {suggestedKeywords.length > 0 && (
+        <div className="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+          <p className="mb-1.5 text-xs font-medium text-neutral-500">
+            🎯 AI가 정한 메인 키워드
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-neutral-900 px-2 py-1 text-sm font-semibold text-white">
+              {suggestedKeywords[0]}
+            </span>
+            {(() => {
+              const s = kwStats[suggestedKeywords[0]];
+              if (!s || (s.volume == null && s.docs == null)) return null;
+              return (
+                <span className="text-xs text-neutral-500">
+                  {s.volume != null && `월 검색 ${s.volume.toLocaleString()}`}
+                  {s.volume != null && s.docs != null && " · "}
+                  {s.docs != null && `문서 ${s.docs.toLocaleString()}개`}
+                </span>
+              );
+            })()}
+          </div>
+          {suggestedKeywords.length > 1 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {suggestedKeywords.slice(1).map((k, i) => {
+                const s = kwStats[k];
+                return (
+                  <span
+                    key={i}
+                    className="rounded-full border border-neutral-300 px-2 py-0.5 text-xs text-neutral-600"
+                  >
+                    {k}
+                    {s?.volume != null ? ` · ${s.volume.toLocaleString()}` : ""}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

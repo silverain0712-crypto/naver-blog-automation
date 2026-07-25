@@ -14,7 +14,7 @@ import time
 
 import config
 from modules import store
-from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher, benchmark
+from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher, benchmark, keyword_stats
 from prompts.post_structures import get_structure
 from modules.llm import _RETRYABLE
 
@@ -157,9 +157,13 @@ def generate(row: dict) -> None:
     )
 
     titles = post.get("title_candidates") or ["(제목 미정)"]
+    suggested = post.get("suggested_keywords", [])
+    # 메인 키워드(맨 앞) 중심으로 검색량·문서수 조회. API 키 없으면 빈 dict(표시만 생략).
+    kw_stats = keyword_stats.fetch_stats(suggested)
     data = {
         "request": req,
-        "suggested_keywords": post.get("suggested_keywords", []),
+        "suggested_keywords": suggested,
+        "keyword_stats": kw_stats,
         "title_candidates": titles,
         "thumbnail_title": post.get("thumbnail_title", []),
         "subheadings": post.get("subheadings", []),
