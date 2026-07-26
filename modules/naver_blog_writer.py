@@ -812,6 +812,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     used = set()    # 본문에서 참조된 사진 번호(마커로 남겨둔 것)
     failed = set()  # PASS 2 재삽입 실패 → 끝에 모아 업로드
     tokens = re.split(r"(\[표\][\s\S]*?\[/표\]|\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
+    dup_caption = None  # 직전 사진의 회색 캡션 — 본문에 같은 줄이 또 오면 1회 건너뛴다
     for tok in tokens:
         mt = re.match(r"\[표\]([\s\S]*?)\[/표\]", tok)
         mp = re.match(r"\[사진\s*(\d+)\]", tok)
@@ -840,6 +841,9 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 body_on(); kb.insert_text(f"[사진{n}]")
                 if cap:
                     kb.press("Enter"); gray_on(); _type_lines(kb, cap); body_on()
+                    # 생성기가 캡션을 본문 인라인에도 넣어 이중으로 찍히던 문제 방지:
+                    # 방금 회색 캡션으로 넣은 문구가 바로 뒤 본문 줄에 또 나오면 그 줄은 건너뛴다.
+                    dup_caption = str(cap).strip()
             else:
                 kb.insert_text(tok)
         elif mv:
@@ -847,6 +851,20 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         else:
             body_lines = tok.split("\n")
             for i, line in enumerate(body_lines):
+                stripped = line.strip()
+                # 캡션 중복 제거: 직전 사진의 회색 캡션과 같은 줄은 타이핑하지 않는다(1회만).
+                if dup_caption and stripped == dup_caption:
+                    dup_caption = None
+                    continue
+                # 움짤 자리 마커([gif_01_설명])는 literal 로 찍지 말고 회색 안내로 바꾼다.
+                gm = re.match(r"^\[gif[_\-]?\d*[_\-]?(.*?)\]$", stripped)
+                if gm:
+                    desc = gm.group(1).strip()
+                    hint = f"(움짤 자리 — {desc})" if desc else "(움짤 자리)"
+                    gray_on(); _insert_text_safe(kb, hint); body_on()
+                    if i < len(body_lines) - 1:
+                        kb.press("Enter"); time.sleep(0.04)
+                    continue
                 norm = _strip_bullet(line)
                 # 소제목도 PASS1 에선 '본문 스타일 그대로 텍스트만' 넣는다. 스타일은 본문이
                 # 다 입력된 뒤(안정된 상태) 아래 별도 패스에서 JS 선택으로 입힌다 — 타이핑
@@ -996,12 +1014,15 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         except Exception as e:
             log(f"남은 사진 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
 
-    # 해시태그는 '모든 사진 뒤 진짜 맨 끝'에 넣어 네이버 태그로 등록되게 한다.
+    # 해시태그: 네이버 글쓰기(임시저장) 에디터는 본문 '#단어'를 태그 칩으로 즉시 바꾸지
+    # 않는다(자동화의 합성 이벤트를 태그 변환기가 무시 — 실측으로 Space/Enter 모두 변환 안 됨).
+    # 대신 '발행' 시 본문의 '#단어'가 태그로 등록된다 → 비비 발행글처럼 '한 줄에 하나씩' 맨 끝에
+    # 넣어둔다(임시저장 화면엔 텍스트로 보이고, 발행하면 태그가 됨).
     if tags:
         _focus_body_end(frame, log)
         kb.press("Enter"); kb.press("Enter"); body_on()
-        _type_lines(kb, " ".join(f"#{t}" for t in tags))
-        log(f"해시태그 {len(tags)}개 맨 끝에 입력.")
+        _type_lines(kb, "\n".join(f"#{t}" for t in tags))
+        log(f"해시태그 {len(tags)}개 맨 끝에 한 줄씩 입력(발행 시 태그 등록).")
 
     if inline_mode:
         mode_desc = f"인라인 자리 {len(used) - len(failed)}장 + 끝모음"
