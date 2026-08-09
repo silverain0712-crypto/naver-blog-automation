@@ -10,6 +10,7 @@ import {
   POST_LENGTHS,
   PHOTO_STYLES,
 } from "@/lib/constants";
+import ThumbnailBuilder from "./ThumbnailBuilder";
 
 type Draft = {
   id: string;
@@ -147,6 +148,17 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     }
   }
 
+  // 썸네일 확정 시: 본문 맨 위 [사진N] 마커 + images 갱신을 화면 상태에도 반영.
+  function onThumbApplied(
+    newBody: string,
+    newImages: string[],
+    newData: Record<string, unknown>,
+  ) {
+    editedRef.current = true;
+    setBody(newBody);
+    setDraft((prev) => (prev ? { ...prev, images: newImages, data: newData } : prev));
+  }
+
   if (!draft) {
     return (
       <main className="mx-auto max-w-lg p-6">
@@ -157,6 +169,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
 
   const d = draft.data ?? {};
   const titleCandidates: string[] = d.title_candidates ?? [];
+  // 썸네일 문구 후보(각 후보 = 1~2줄). options 없으면 단일 thumbnail_title 을 후보 1개로.
+  const rawThumbOptions = d.thumbnail_title_options;
+  const thumbCandidates: string[][] = Array.isArray(rawThumbOptions) && rawThumbOptions.length
+    ? rawThumbOptions
+        .filter((o: unknown) => Array.isArray(o) && o.length)
+        .map((o: unknown[]) => o.map(String))
+    : Array.isArray(d.thumbnail_title) && d.thumbnail_title.length
+      ? [d.thumbnail_title.map(String)]
+      : [];
   const hashtags: string[] = d.hashtags ?? [];
   // AI가 정한 키워드(맨 앞이 메인). keyword_stats 는 나중에 검색량/문서수를 채우면 자동 표시된다.
   const suggestedKeywords: string[] = d.suggested_keywords ?? [];
@@ -445,6 +466,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       {hashtags.length > 0 && (
         <p className="mt-3 text-xs text-neutral-500">#{hashtags.join(" #")}</p>
       )}
+
+      <ThumbnailBuilder
+        draftId={draft.id}
+        images={draft.images ?? []}
+        candidates={thumbCandidates}
+        getBody={() => body}
+        getData={() => draft.data ?? {}}
+        onApplied={onThumbApplied}
+      />
 
       <div className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
         <p className="mb-1 text-sm font-medium text-neutral-700">✏️ 수정 요청</p>

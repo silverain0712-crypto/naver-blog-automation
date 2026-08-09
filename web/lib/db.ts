@@ -66,10 +66,10 @@ export async function deleteDraft(id: string): Promise<void> {
 
 // 브라우저가 Vercel 함수(4.5MB 제한)를 거치지 않고 Supabase 로 직접 PUT 하도록
 // 서명 업로드 URL 생성 → 절대 URL 반환. (사진 장수 제한 없이 안정적)
-export async function createSignedUpload(path: string): Promise<string> {
+export async function createSignedUpload(path: string, upsert = false): Promise<string> {
   const { data, error } = await supabase.storage
     .from(SUPABASE_BUCKET)
-    .createSignedUploadUrl(path);
+    .createSignedUploadUrl(path, upsert ? { upsert: true } : undefined);
   if (error || !data) throw new Error(`createSignedUpload(${path}): ${error?.message}`);
   let url = data.signedUrl;
   if (url.startsWith("/")) url = `${SUPABASE_URL}${url}`;

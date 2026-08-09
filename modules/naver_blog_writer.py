@@ -360,7 +360,11 @@ def _insert_table(frame, page, rows, log):
     kb.press("ArrowUp"); time.sleep(0.15)
     frame.locator("button.se-table-toolbar-button").first.click(timeout=4000)
     time.sleep(1.0)
-    # 행 맞추기(기본 3행 → R행): 행 컨트롤바의 '행 추가' 버튼 클릭
+    # 방금 삽입한 표만 대상으로 한정: 삽입은 항상 현재 커서(문서 끝쪽)에 일어나므로
+    # DOM상 마지막 표가 새 표다. 글에 표가 여러 개면 전역 로케이터는 앞 표 셀까지 잡아
+    # 두 번째 표 입력이 첫 표에 덮어써진다(요금·비고 셀이 붙는 버그).
+    new_table = frame.locator(".se-component.se-table").last
+    # 행 맞추기(기본 3행 → R행): 행 컨트롤바의 '행 추가' 버튼 클릭(가장 마지막=새 표)
     cur = 3
     add_btn = "ul.se-cell-controlbar-row li.se-cell-controlbar-item button.se-cell-add-button"
     guard = 0
@@ -373,8 +377,8 @@ def _insert_table(frame, page, rows, log):
         except Exception as e:
             log(f"  표 행 추가 실패: {str(e)[:50]}")
             break
-    # 셀 채우기(td 순서 = 행 우선). 셀은 개별 클릭 후 입력.
-    cells = frame.locator(".se-component.se-table td .se-text-paragraph")
+    # 셀 채우기(td 순서 = 행 우선). 셀은 개별 클릭 후 입력. 반드시 이 표 안으로만 한정.
+    cells = new_table.locator("td .se-text-paragraph")
     total = cells.count()
     for i, row in enumerate(norm):
         for c in range(3):
@@ -763,6 +767,23 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     g_idx = next((i for i, l in enumerate(lines) if "안녕하세요" in l and "비비" in l), None)
     intro = lines[:g_idx] if g_idx is not None else []
     rest_text = "\n".join(lines[g_idx:]) if g_idx is not None else body
+
+    # 인트로(제목/요약 블록)에 섞인 [사진N] 마커는 본문 앞쪽으로 옮긴다. 인트로에 그대로
+    # 두면 '큰 제목' 텍스트로 타이핑되고(사진은 안 들어감), PASS 2 대상(used)에도 안 잡혀
+    # 사진이 끝모음으로 밀린다. (앱 '썸네일 만들기'가 대표사진 마커를 맨 위에 넣는 경우 대비)
+    intro_markers, kept_intro = [], []
+    for l in intro:
+        found = re.findall(r"\[사진\s*\d+\]", l)
+        if found:
+            intro_markers += [re.sub(r"\s+", "", m) for m in found]
+            l = re.sub(r"\[사진\s*\d+\]", "", l)
+            if not l.strip():
+                continue
+        kept_intro.append(l)
+    if intro_markers:
+        intro = kept_intro
+        rest_text = "\n".join(intro_markers) + "\n" + rest_text
+        log(f"인트로의 사진 마커 {len(intro_markers)}개를 본문 앞으로 옮김(제목 오염 방지).")
 
     # [사진N] 마커를 반드시 '자기 줄'로 분리한다. 생성기가 "...했어요. [사진1]" 처럼
     # 본문과 같은 줄에 붙여 쓰면 PASS 2 가 마커 문단(정확히 '[사진N]')을 못 찾아 재삽입에

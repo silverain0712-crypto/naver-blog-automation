@@ -26,6 +26,11 @@ _POST_SCHEMA = {
         "suggested_keywords": {"type": "array", "items": {"type": "string"}},
         "title_candidates": {"type": "array", "items": {"type": "string"}},
         "thumbnail_title": {"type": "array", "items": {"type": "string"}},  # 썸네일용 1~2줄(줄당 짧게)
+        # 썸네일 문구 후보 3개. 각 후보 = 1~2줄(줄당 짧게). 사용자가 앱에서 고르거나 직접 수정.
+        "thumbnail_title_options": {
+            "type": "array",
+            "items": {"type": "array", "items": {"type": "string"}},
+        },
         "subheadings": {"type": "array", "items": {"type": "string"}},  # 본문에 쓴 소제목들(본문과 글자까지 동일)
         "meta_description": {"type": "string"},
         "body": {"type": "string"},  # 소제목+본문. 사진=[사진N], 영상=[영상N] 표기
@@ -73,6 +78,7 @@ _POST_SCHEMA = {
         "suggested_keywords",
         "title_candidates",
         "thumbnail_title",
+        "thumbnail_title_options",
         "subheadings",
         "meta_description",
         "body",
@@ -370,6 +376,10 @@ def generate_post(
         "그대로(개수 제한 없이) 우선해 넣어라. 서로 중복되거나 너무 일반적이지 않게.\n"
         "- thumbnail_title: 썸네일에 넣을 짧은 제목을 1~2줄(배열)로. 각 줄은 10자 안팎으로 "
         "짧고 굵게. 예: ['서울형 키즈카페 신당점'] 또는 ['애착인형 언제부터?','돌 아기 시기와 종류'].\n"
+        "- thumbnail_title_options: 위 thumbnail_title 과 같은 형식(각 후보 = 1~2줄 배열)의 "
+        "**서로 다른 각도의 썸네일 문구 후보 3개**. 첫 번째 후보는 thumbnail_title 과 동일해도 된다. "
+        "지역·핵심키워드를 앞에 두되 후보마다 톤/강조를 다르게(정보형·후기형·궁금증 유발형 등). "
+        "예: [['제주 아르떼 키즈파크','16개월 비추'],['제주 실내 키즈파크','아르떼 후기'],['16개월 아기랑','아르떼 키즈파크']].\n"
         "- subheadings: 본문에 사용한 소제목들을 배열로 나열. ●·불릿·기호 없이 글자만"
         "(본문의 소제목과 글자까지 똑같이). 단 '루틴·순서·단계' 섹션의 소제목은 "
         "본문에 쓴 그대로(예: '1. 돌돌이로 침대 청소') 번호를 포함해 넣어라.\n"

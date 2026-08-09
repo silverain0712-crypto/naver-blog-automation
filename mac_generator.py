@@ -166,6 +166,7 @@ def generate(row: dict) -> None:
         "keyword_stats": kw_stats,
         "title_candidates": titles,
         "thumbnail_title": post.get("thumbnail_title", []),
+        "thumbnail_title_options": post.get("thumbnail_title_options", []),
         "subheadings": post.get("subheadings", []),
         "meta_description": post.get("meta_description", ""),
         "hashtags": post.get("hashtags", []),

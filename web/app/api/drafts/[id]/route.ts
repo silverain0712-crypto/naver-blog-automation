@@ -25,6 +25,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (body.body !== undefined) allowed.body = body.body;
     if (body.status !== undefined) allowed.status = body.status;
     if (body.data !== undefined) allowed.data = body.data;
+    // 썸네일(대표사진) 배선: 편집 화면에서 images 배열에 썸네일 경로를 덧붙일 수 있게 허용.
+    if (body.images !== undefined) allowed.images = body.images;
     await updateDraft(id, allowed);
     return NextResponse.json({ ok: true });
   } catch (e) {
