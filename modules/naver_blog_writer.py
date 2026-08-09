@@ -99,6 +99,23 @@ def _editor_frame(page, log, timeout_s: int = 60):
     return page
 
 
+def _continue_popup_visible(scope) -> bool:
+    """'작성 중인 글이 있습니다(이어서 작성)' 계열 팝업이 떠 있는지."""
+    js = r"""() => {
+      for (const el of document.querySelectorAll('[class*=popup], [role=dialog], .se-popup')) {
+        const st = el.offsetParent === null ? null : el;
+        if (!st) continue;
+        const t = (el.innerText || '');
+        if (/작성\s*중인\s*글|이어서\s*작성|불러오시겠/.test(t)) return true;
+      }
+      return false;
+    }"""
+    try:
+        return bool(scope.evaluate(js))
+    except Exception:
+        return False
+
+
 def _dismiss_continue_popup(scope, log):
     """'작성 중인 글이 있습니다 이어서 작성하시겠어요?' 팝업이 뜨면 '취소'(새 글)."""
     candidates = [
@@ -549,6 +566,12 @@ def _force_dismiss_popups(frame, page, log):
     _dismiss_continue_popup(frame, log)
     _dismiss_continue_popup(page, log)
     for ctx in (frame, page):
+        # '확인' 은 위험하다: '작성 중인 글이 있습니다' 팝업에서 확인=이어서 작성 이라
+        # 직전 글의 임시저장 문서를 물려받고, 저장 시 그 글을 덮어써 버린다(글 유실).
+        # 그래서 팝업 문구에 '작성'/'이어서' 가 보이면 확인은 건너뛰고 취소만 쓴다.
+        if _continue_popup_visible(ctx):
+            log("이어서작성 계열 팝업 감지 → '확인' 클릭 건너뜀(덮어쓰기 방지).")
+            continue
         for sel in ("button:has-text('확인')", "button:has-text('닫기')",
                     ".se-popup-button-close", "[class*=popup] button[class*=close]"):
             try:
@@ -1178,6 +1201,8 @@ def _save_draft(frame, log):
             return True
         log(f"  저장 미확인(개수 {before}→{after}, busy={_busy_text(page)}) → 재시도")
     log("저장 실패: 임시저장 개수가 늘지 않음(거짓 성공 방지 → error 처리).")
+    log("  ⚠ 개수가 그대로면 '새 글'이 아니라 기존 임시저장 글을 덮어썼을 수 있습니다."
+        " 네이버 임시저장 목록에서 앞 글이 사라지지 않았는지 확인하세요.")
     return False
 
 
