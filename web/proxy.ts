@@ -8,6 +8,7 @@ export function proxy(req: NextRequest) {
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/login") ||
     pathname.startsWith("/_next") ||
+    pathname.startsWith("/fonts/") || // 썸네일용 웹폰트(비밀 아님) — 인증 리다이렉트 대상 제외
     pathname === "/favicon.ico"
   ) {
     return NextResponse.next();
@@ -25,5 +26,5 @@ export function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|fonts/|favicon.ico).*)"],
 };
