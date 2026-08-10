@@ -2,22 +2,35 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// ── 비비 고정 템플릿 실측 상수(modules/thumbnail_maker.py 와 동일 좌표) ──
+// ── 비비 고정 템플릿 상수 ──
+// 미리캔버스 원본 썸네일 3장을 픽셀 측정해서 맞춘 값이다(잉크 박스 기준).
+// 좌표는 '글자가 실제로 칠해지는 영역'을 뜻하며, baseline 이 아니다 — drawInk() 참고.
 const S = 1080;
-const MARGIN = 48;
 const BG = "#EEE9E3"; // 크림 배경 (238,233,227)
 const ACCENT = "#568A35"; // @bbnation / REVIEW / 가로선 (86,138,53)
 const TITLE_C = "#41661B"; // 하단 제목 (65,102,27)
-const ARCH_W = 714;
-const ARCH_TOP = 125;
+// 아치: 원본은 캔버스 정중앙이 아니라 살짝 오른쪽(중심 551)이고 하단 모서리는 직각이다.
+const ARCH_X = 195;
+const ARCH_W = 713;
+const ARCH_TOP = 105;
 const ARCH_BOTTOM = 855;
-const ARCH_BOTTOM_R = 28; // 아치 하단 모서리 라운드(미리캔버스 원본과 맞춤)
-const TITLE_SIZE = 53;
-const TITLE_STEP = 86;
-const TITLE_CENTER_Y = 965;
-const HEADER_Y = 67;
-const BRAND_SIZE = 19;
-const REVIEW_SIZE = 25;
+const BRAND_SIZE = 25;
+const BRAND_INK_X = 35; // '@' 왼쪽 끝이 닿는 x
+const BRAND_CY = 54; // 잉크 세로 중심
+const REVIEW_SIZE = 34;
+const REVIEW_INK_RIGHT = 1018; // 'W' 오른쪽 끝이 닿는 x
+const REVIEW_CY = 74.5;
+// 원본의 REVIEW 는 텍스트 상자를 세로로 늘려 놓은 상태(가로폭 대비 글자가 높다).
+// 같은 서체로 폭·높이를 동시에 맞추려면 세로 스케일이 필요하다.
+const REVIEW_STRETCH = 1.4;
+const LINE_Y = 57;
+const LINE_X0 = 195;
+const LINE_X1 = 872;
+const LINE_W = 3;
+const TITLE_SIZE = 70;
+const TITLE_STEP = 114;
+const TITLE_CENTER_Y = 966;
+const TITLE_MAX_W = 980; // 넘치면 자동으로 줄인다(원본은 손으로 맞췄지만 여긴 자동)
 const FONT = "Ghanachocolate";
 
 const THUMB_PATH_SUFFIX = "/thumb.png"; // `${id}/thumb.png`
@@ -34,17 +47,30 @@ type Props = {
 
 function archPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
   const r = w / 2; // 상단 반원 반지름
-  const R = x + w;
-  const B = y + h;
-  const br = ARCH_BOTTOM_R;
   ctx.beginPath();
   ctx.moveTo(x, y + r);
   ctx.arc(x + r, y + r, r, Math.PI, 2 * Math.PI, false); // 상단 반원(좌→위→우)
-  ctx.lineTo(R, B - br);
-  ctx.arcTo(R, B, R - br, B, br); // 우하단 라운드
-  ctx.lineTo(x + br, B);
-  ctx.arcTo(x, B, x, B - br, br); // 좌하단 라운드
+  ctx.lineTo(x + w, y + h); // 하단은 직각(원본과 동일)
+  ctx.lineTo(x, y + h);
   ctx.closePath();
+}
+
+/** 글자를 '잉크 박스' 기준으로 놓는다. baseline 기준으로 두면 문자열마다 위아래로 흔들린다. */
+function drawInk(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cy: number,
+  anchor: { left: number } | { right: number } | { center: number },
+) {
+  const m = ctx.measureText(text);
+  const y = cy - (m.actualBoundingBoxDescent - m.actualBoundingBoxAscent) / 2;
+  const x =
+    "left" in anchor
+      ? anchor.left + m.actualBoundingBoxLeft
+      : "right" in anchor
+        ? anchor.right - m.actualBoundingBoxRight
+        : anchor.center;
+  return { x, y };
 }
 
 function drawCover(
@@ -141,59 +167,58 @@ export default function ThumbnailBuilder({
     // 헤더: @bbnation + 가로선 + REVIEW
     ctx.fillStyle = ACCENT;
     ctx.strokeStyle = ACCENT;
-    ctx.textBaseline = "middle";
-    ctx.font = `${BRAND_SIZE}px "${FONT}", sans-serif`;
+    ctx.textBaseline = "alphabetic";
     ctx.textAlign = "left";
-    ctx.fillText("@bbnation", MARGIN, HEADER_Y);
-    const brandW = ctx.measureText("@bbnation").width;
+
+    ctx.font = `${BRAND_SIZE}px "${FONT}", sans-serif`;
+    const b = drawInk(ctx, "@bbnation", BRAND_CY, { left: BRAND_INK_X });
+    ctx.fillText("@bbnation", b.x, b.y);
+
     ctx.font = `${REVIEW_SIZE}px "${FONT}", sans-serif`;
-    ctx.textAlign = "right";
-    ctx.fillText("REVIEW", S - MARGIN, HEADER_Y);
-    const reviewW = ctx.measureText("REVIEW").width;
-    const ls = MARGIN + brandW + 18;
-    const le = S - MARGIN - reviewW - 22;
-    if (le > ls) {
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(ls, HEADER_Y);
-      ctx.lineTo(le, HEADER_Y);
-      ctx.stroke();
-    }
+    const r = drawInk(ctx, "REVIEW", REVIEW_CY, { right: REVIEW_INK_RIGHT });
+    ctx.save();
+    ctx.translate(0, REVIEW_CY);
+    ctx.scale(1, REVIEW_STRETCH);
+    ctx.translate(0, -REVIEW_CY);
+    ctx.fillText("REVIEW", r.x, r.y);
+    ctx.restore();
+
+    ctx.lineWidth = LINE_W;
+    ctx.beginPath();
+    ctx.moveTo(LINE_X0, LINE_Y);
+    ctx.lineTo(LINE_X1, LINE_Y);
+    ctx.stroke();
 
     // 아치 사진(cover-crop → 아치 마스크)
+    const boxH = ARCH_BOTTOM - ARCH_TOP;
+    ctx.save();
+    archPath(ctx, ARCH_X, ARCH_TOP, ARCH_W, boxH);
     if (bitmap) {
-      const x0 = (S - ARCH_W) / 2;
-      const boxH = ARCH_BOTTOM - ARCH_TOP;
-      ctx.save();
-      archPath(ctx, x0, ARCH_TOP, ARCH_W, boxH);
       ctx.clip();
-      drawCover(ctx, bitmap, x0, ARCH_TOP, ARCH_W, boxH);
-      ctx.restore();
+      drawCover(ctx, bitmap, ARCH_X, ARCH_TOP, ARCH_W, boxH);
     } else {
-      // 사진 미선택 안내 placeholder
-      const x0 = (S - ARCH_W) / 2;
-      const boxH = ARCH_BOTTOM - ARCH_TOP;
-      ctx.save();
-      archPath(ctx, x0, ARCH_TOP, ARCH_W, boxH);
-      ctx.fillStyle = "#E2DCD0";
+      ctx.fillStyle = "#E2DCD0"; // 사진 미선택 placeholder
       ctx.fill();
-      ctx.restore();
     }
+    ctx.restore();
 
-    // 하단 제목(초록, 가운데, 1~2줄)
+    // 하단 제목(초록, 가운데, 1~2줄). 폭이 넘치면 자동 축소.
     const lines = splitLines(phrase);
     ctx.fillStyle = TITLE_C;
     ctx.strokeStyle = TITLE_C;
-    ctx.font = `${TITLE_SIZE}px "${FONT}", sans-serif`;
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
     ctx.lineWidth = 1.5;
-    const n = lines.length;
-    const start = TITLE_CENTER_Y - ((n - 1) * TITLE_STEP) / 2;
+    let size = TITLE_SIZE;
+    ctx.font = `${size}px "${FONT}", sans-serif`;
+    const widest = Math.max(0, ...lines.map((l) => ctx.measureText(l).width));
+    if (widest > TITLE_MAX_W) size = Math.floor((size * TITLE_MAX_W) / widest);
+    ctx.font = `${size}px "${FONT}", sans-serif`;
+    const step = (TITLE_STEP * size) / TITLE_SIZE;
+    const start = TITLE_CENTER_Y - ((lines.length - 1) * step) / 2;
     lines.forEach((ln, i) => {
-      const y = start + i * TITLE_STEP;
-      ctx.fillText(ln, S / 2, y);
-      ctx.strokeText(ln, S / 2, y); // 살짝 두껍게(원본 stroke_width 재현)
+      const t = drawInk(ctx, ln, start + i * step, { center: S / 2 });
+      ctx.fillText(ln, t.x, t.y);
+      ctx.strokeText(ln, t.x, t.y); // 살짝 두껍게(원본 굵기 재현)
     });
   }, [bitmap, phrase]);
 
