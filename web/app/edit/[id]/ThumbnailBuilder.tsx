@@ -23,10 +23,12 @@ const BRAND_CY = 54; // 잉크 세로 중심
 const REVIEW_SIZE = 42;
 const REVIEW_INK_RIGHT = 1018; // 'W' 오른쪽 끝이 닿는 x
 const REVIEW_CY = 75;
+// 원본 실측: 선은 @bbnation 뒤(195)부터 REVIEW 오른쪽 끝(1016)까지 쭉 이어지고,
+// REVIEW 는 그 선 아래에 윗변이 닿게 놓인다. 두께는 2px.
 const LINE_Y = 57;
 const LINE_X0 = 195;
-const LINE_X1 = 840; // REVIEW 앞에서 멈춘다(글자가 커진 만큼 원본 872보다 짧게)
-const LINE_W = 3;
+const LINE_X1 = 1016;
+const LINE_W = 2;
 const TITLE_SIZE = 70;
 const TITLE_STEP = 114;
 const TITLE_CENTER_Y = 966;
