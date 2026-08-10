@@ -17,15 +17,15 @@ const ARCH_BOTTOM = 855;
 const BRAND_SIZE = 25;
 const BRAND_INK_X = 35; // '@' 왼쪽 끝이 닿는 x
 const BRAND_CY = 54; // 잉크 세로 중심
-const REVIEW_SIZE = 34;
+// 원본 REVIEW 는 획 대비가 큰 세리프체(가나초콜릿 아님)라 폭·높이를 동시에 맞출 수 없다.
+// 세로로 늘려 맞춰봤더니 글자가 찌그러져 어색해서, 늘리지 않고 높이만 비슷하게 키운다.
+// 원본 폰트를 확보하면 이 값들 대신 그 폰트를 심으면 된다.
+const REVIEW_SIZE = 42;
 const REVIEW_INK_RIGHT = 1018; // 'W' 오른쪽 끝이 닿는 x
-const REVIEW_CY = 74.5;
-// 원본의 REVIEW 는 텍스트 상자를 세로로 늘려 놓은 상태(가로폭 대비 글자가 높다).
-// 같은 서체로 폭·높이를 동시에 맞추려면 세로 스케일이 필요하다.
-const REVIEW_STRETCH = 1.4;
+const REVIEW_CY = 75;
 const LINE_Y = 57;
 const LINE_X0 = 195;
-const LINE_X1 = 872;
+const LINE_X1 = 840; // REVIEW 앞에서 멈춘다(글자가 커진 만큼 원본 872보다 짧게)
 const LINE_W = 3;
 const TITLE_SIZE = 70;
 const TITLE_STEP = 114;
@@ -176,12 +176,7 @@ export default function ThumbnailBuilder({
 
     ctx.font = `${REVIEW_SIZE}px "${FONT}", sans-serif`;
     const r = drawInk(ctx, "REVIEW", REVIEW_CY, { right: REVIEW_INK_RIGHT });
-    ctx.save();
-    ctx.translate(0, REVIEW_CY);
-    ctx.scale(1, REVIEW_STRETCH);
-    ctx.translate(0, -REVIEW_CY);
     ctx.fillText("REVIEW", r.x, r.y);
-    ctx.restore();
 
     ctx.lineWidth = LINE_W;
     ctx.beginPath();
