@@ -87,15 +87,19 @@ def _kenburns_clip(photo: Path, seconds: float, caption: str, out: Path,
 
 
 def _video_clip(src: Path, seconds: float, caption: str, out: Path,
-                tmp: Path, idx: int, log) -> bool:
-    """AI 변환 영상 → 9:16 로 맞추고 자막을 얹어 지정 길이로 자른다."""
+                tmp: Path, idx: int, log, loop: bool = False) -> bool:
+    """영상(AI 변환본 또는 움짤) → 9:16 로 맞추고 자막을 얹어 지정 길이로 자른다.
+
+    loop=True 면 소재가 씬보다 짧아도 반복해서 채운다(움짤은 보통 4~8초라 필요하다).
+    """
     vf = (
         f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
         f"{_sub_filter(caption, tmp, idx)},"
         f"fade=t=in:st=0:d=0.3,fade=t=out:st={max(0, seconds - 0.3):.2f}:d=0.3,"
         f"format=yuv420p,setsar=1"
     )
-    return _run([_ffmpeg(), "-y", "-i", str(src), "-t", f"{seconds:.2f}",
+    pre = ["-stream_loop", "-1"] if loop else []
+    return _run([_ffmpeg(), "-y", *pre, "-i", str(src), "-t", f"{seconds:.2f}",
                  "-vf", vf, "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
                  "-crf", "20", "-an", str(out)], log)
 
@@ -179,7 +183,13 @@ def render(
             clip = tmpdir / f"c{n:02d}.mp4"
             made = False
 
-            if sc.get("motion_worth") == "high" and photo and video_engine.enabled():
+            # 움짤은 이미 '실제로 찍은 움직임'이다. AI 변환보다 진짜고 공짜라 그대로 쓴다.
+            if photo and photo.suffix.lower() == ".gif":
+                made = _video_clip(photo, seconds, caption, clip, tmpdir, n, log, loop=True)
+                if made:
+                    log(f"  씬{n}: 움짤 사용(AI 변환 건너뜀)")
+
+            if not made and sc.get("motion_worth") == "high" and photo and video_engine.enabled():
                 log(f"  씬{n}: AI 영상 변환 시도")
                 ai = video_engine.generate_clip(
                     photo, sc.get("motion_prompt") or "", seconds, tmpdir / f"ai{n}.mp4", log)
