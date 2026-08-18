@@ -70,7 +70,7 @@ SHORTFORM_MODEL = "claude-sonnet-4-6"
 # (2026-08 기준 720p: lite $0.05/s, fast $0.10/s, standard $0.40/s).
 # 전 컷을 움직이지 않고 motion_worth=high 인 컷만 변환한다(modules/shortform.py).
 VIDEO_ENGINE = os.getenv("VIDEO_ENGINE", "veo").strip()          # veo | none
-VEO_MODEL = os.getenv("VEO_MODEL", "veo-3.1-fast-generate-001").strip()
+VEO_MODEL = os.getenv("VEO_MODEL", "veo-3.1-fast-generate-preview").strip()
 VEO_RESOLUTION = os.getenv("VEO_RESOLUTION", "720p").strip()
 # 나레이션: "subtitle"(자막만) | "tts"(AI 성우). 만들 때마다 앱에서 고른다 — 여기는 기본값.
 SHORTFORM_NARRATION = os.getenv("SHORTFORM_NARRATION", "subtitle").strip()
