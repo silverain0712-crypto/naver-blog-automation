@@ -13,14 +13,21 @@ Veo 는 '출력 초당' 과금이라 호출 한 번이 곧 비용이다. 그래�
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
 import json
-import mimetypes
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+from PIL import Image, ImageOps
+
 import config
+
+# 생성한 클립을 (사진+지시문+길이) 기준으로 재사용한다. 나레이션만 바꿔 다시 렌더할 때
+# 같은 컷에 또 과금되면 안 되기 때문 — Veo 는 호출 한 번이 곧 돈이다.
+CACHE_DIR = config.OUTPUT_DIR / "shortform_cache"
 
 _API = "https://generativelanguage.googleapis.com/v1beta"
 # Veo 가 받아주는 길이(초). 요청 길이를 여기에 맞춰 반올림한다.
@@ -49,9 +56,29 @@ def _get(url: str, timeout: int = 60) -> dict:
         return json.load(r)
 
 
+def _to_portrait_jpeg(path: Path, w: int = 720, h: int = 1280) -> bytes:
+    """보내기 전에 사진을 9:16 으로 잘라 둔다.
+
+    가로 사진을 그대로 넣고 9:16 을 요청하면 모델이 빈 좌우를 '지어내서' 원본에 없던
+    사람·물건이 생긴다(실측: 어른 손과 다른 책장이 만들어짐). 내돈내산 후기에서
+    없던 장면이 만들어지는 건 치명적이라, 프레이밍을 우리가 먼저 확정해서 넘긴다.
+    """
+    img = ImageOps.exif_transpose(Image.open(path))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img = ImageOps.fit(img, (w, h), method=Image.LANCZOS, centering=(0.5, 0.45))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+
+
 def _snap_seconds(seconds: float) -> int:
-    """요청 길이를 Veo 가 받는 값으로 맞춘다(가까운 쪽, 동률이면 짧은 쪽 = 싼 쪽)."""
-    return min(_ALLOWED_SECONDS, key=lambda a: (abs(a - seconds), a))
+    """요청 길이를 Veo 가 받는 값으로 맞춘다 — 요청보다 '길게'.
+
+    짧게 잡으면(5초 씬에 4초 클립) 렌더가 -t 로 늘리지 못해 그 씬만 짧아진다.
+    길게 받아 잘라 쓰는 쪽이 안전하다. 최대치를 넘으면 최대치.
+    """
+    return next((a for a in _ALLOWED_SECONDS if a >= seconds), _ALLOWED_SECONDS[-1])
 
 
 def _find_video_uri(op: dict):
@@ -95,13 +122,23 @@ def generate_clip(
 
     image_path, out_path = Path(image_path), Path(out_path)
     dur = _snap_seconds(seconds)
-    mime = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
-    b64 = base64.standard_b64encode(image_path.read_bytes()).decode("ascii")
+    jpeg = _to_portrait_jpeg(image_path)
 
+    key = hashlib.sha256(
+        hashlib.sha256(jpeg).hexdigest().encode()
+        + f"|{motion_prompt}|{dur}|{config.VEO_MODEL}|{config.VEO_RESOLUTION}".encode()
+    ).hexdigest()[:24]
+    cached = CACHE_DIR / f"{key}.mp4"
+    if cached.exists() and cached.stat().st_size > 10000:
+        out_path.write_bytes(cached.read_bytes())
+        log(f"    캐시된 클립 재사용(과금 없음): {cached.name}")
+        return out_path
+
+    b64 = base64.standard_b64encode(jpeg).decode("ascii")
     payload = {
         "instances": [{
             "prompt": motion_prompt,
-            "image": {"bytesBase64Encoded": b64, "mimeType": mime},
+            "image": {"bytesBase64Encoded": b64, "mimeType": "image/jpeg"},
         }],
         "parameters": {
             "aspectRatio": "9:16",
@@ -157,6 +194,11 @@ def generate_clip(
             return None
 
         if out_path.exists() and out_path.stat().st_size > 10000:
+            try:
+                CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cached.write_bytes(out_path.read_bytes())
+            except Exception:
+                pass
             log(f"    Veo 클립 완성: {out_path.name} ({out_path.stat().st_size // 1024}KB)")
             return out_path
         log("    Veo 영상 파일이 비었음")
