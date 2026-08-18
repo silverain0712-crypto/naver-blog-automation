@@ -140,6 +140,8 @@ def _build_job_dir(row: dict):
         "videos": [],
         "captions": data.get("captions", {}),
         "subheadings": data.get("subheadings", []),
+        # 쇼핑커넥트 상품: 본문 '[상품N]' 마커 자리에 카드로 들어간다(N=1부터, 검색어=상품명).
+        "products": data.get("products") or [],
         "font": data.get("font", "나눔스퀘어"),
         "size": data.get("size", 15),
     }

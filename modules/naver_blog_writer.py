@@ -330,6 +330,86 @@ def _insert_divider(frame, log, style="line6"):
         log(f"구분선 삽입 실패: {e}")
 
 
+def _probe_toolbar(frame, log, keyword=""):
+    """툴바 버튼의 class/data-name 을 로그에 덤프한다(셀렉터가 안 맞을 때 원인 추적용)."""
+    js = r"""(kw) => {
+      const out = [];
+      for (const b of document.querySelectorAll('button')) {
+        const cls = b.className || '', dn = b.getAttribute('data-name') || '',
+              dv = b.getAttribute('data-value') || '', t = (b.innerText || '').trim().slice(0, 12);
+        const s = `${cls}|${dn}|${dv}|${t}`;
+        if (!kw || s.includes(kw)) out.push(s);
+      }
+      return out.slice(0, 60);
+    }"""
+    try:
+        for row in frame.evaluate(js, keyword):
+            log(f"    [toolbar] {row}")
+    except Exception as e:
+        log(f"    (툴바 덤프 실패: {e})")
+
+
+def _insert_quote(frame, page, text, log, style="quotation_line"):
+    """네이버 인용구 컴포넌트를 삽입하고 text 를 채운다.
+
+    NAEO 인용 조건(2026-08-15 진단): 서론 직후 '핵심 결론 선요약'을 인용구로 최소 1개.
+    발행 경로가 NAEO 익스텐션이 아니라 이 워커라서, 마크다운 '>' 는 네이버에서 그냥
+    꺾쇠 글자로 찍힌다 → 에디터 인용구 버튼을 직접 눌러야 실제 컴포넌트가 된다.
+
+    표와 같은 '샌드위치' 방식: 뒤에 남을 빈 문단을 먼저 만들고 그 위로 올라가 삽입한다.
+    그래야 인용구 다음 본문이 인용구 안으로 새어 들어가지 않는다.
+    """
+    kb = page.keyboard
+    kb.press("Enter"); time.sleep(0.15)
+    kb.press("ArrowUp"); time.sleep(0.15)
+
+    opened = False
+    try:
+        opt = frame.locator(
+            "button.se-document-toolbar-select-option-button[data-name='quotation']"
+        ).first
+        if opt.count():
+            opt.click(timeout=2000)
+            time.sleep(0.4)
+            sv = frame.locator(f"button[data-value='{style}']")
+            if not sv.count():
+                # 스타일 값이 다르면 드롭다운의 첫 스타일로 대체
+                sv = frame.locator(".se-toolbar-option-quotation button")
+            if sv.count():
+                sv.first.click(timeout=2000)
+                opened = True
+                log(f"인용구({style}) 삽입")
+    except Exception as e:
+        log(f"  인용구 드롭다운 실패({str(e)[:50]})")
+
+    if not opened:
+        for sel in ("button.se-quotation-toolbar-button",
+                    "button.se-insert-quotation-default-button",
+                    "button[data-name='quotation']"):
+            try:
+                loc = frame.locator(sel).first
+                if loc.count():
+                    loc.click(timeout=2000)
+                    opened = True
+                    log(f"인용구 삽입(기본, {sel})")
+                    break
+            except Exception:
+                continue
+
+    if not opened:
+        log("  인용구 버튼을 못 찾음 → 회색 텍스트로 대체. 실제 툴바를 덤프합니다:")
+        _probe_toolbar(frame, log, "quot")
+        _focus_body_end(frame, log)
+        return False
+
+    time.sleep(0.6)
+    _type_lines(kb, text)
+    time.sleep(0.3)
+    # 인용구 밖(아래 빈 문단)으로 커서 복귀 — 표 삽입과 동일하게 본문 끝을 다시 잡는다.
+    _focus_body_end(frame, log)
+    return True
+
+
 def _parse_table_block(inner: str) -> list[list[str]]:
     """[표] 블록 내부 텍스트 → 행(list) 목록. 각 줄은 '|' 로 칸 구분, 구분선(---)은 건너뜀."""
     rows = []
@@ -385,37 +465,73 @@ def _insert_table(frame, page, rows, log):
     cur = 3
     add_btn = "ul.se-cell-controlbar-row li.se-cell-controlbar-item button.se-cell-add-button"
     guard = 0
+    fails = 0
     while cur < R and guard < 40:
         guard += 1
         try:
             frame.locator(add_btn).last.click(timeout=2000)
             cur += 1
+            fails = 0
             time.sleep(0.2)
         except Exception as e:
-            log(f"  표 행 추가 실패: {str(e)[:50]}")
-            break
-    # 셀 채우기(td 순서 = 행 우선). 셀은 개별 클릭 후 입력. 반드시 이 표 안으로만 한정.
-    cells = new_table.locator("td .se-text-paragraph")
-    total = cells.count()
-    for i, row in enumerate(norm):
-        for c in range(3):
-            idx = i * 3 + c
-            if idx >= total:
+            # 행 컨트롤바는 표에 포커스가 있어야 뜬다. 한 번 놓쳤다고 바로 포기하면
+            # 마지막 행이 통째로 잘린 표가 저장된다(실측) → 셀을 눌러 되살리고 재시도.
+            fails += 1
+            if fails >= 3:
+                log(f"  표 행 추가 실패(3회 시도): {str(e)[:50]}")
                 break
+            try:
+                new_table.locator("td").last.click(timeout=2000)
+            except Exception:
+                pass
+            time.sleep(0.4)
+    # 셀 채우기 — 행(tr)마다 td 를 다시 잡는다.
+    # 예전엔 표 전체를 'td .se-text-paragraph' 평면 리스트로 잡아 i*3+c 로 인덱싱했는데,
+    # 빈 셀에 문단 노드가 없으면 인덱스가 밀려 값이 엉뚱한 칸에 들어가거나 뒷 행이 통째로
+    # 비었다(실측: 헤더 2번째 칸과 마지막 행이 빈 채로 저장됨). 행 단위로 잡으면 안 밀린다.
+    rows_loc = new_table.locator("tr")
+    # 마지막 '행 추가' 클릭이 DOM 에 반영되기 전에 세면 행이 하나 모자라게 잡히고,
+    # 그 행은 채우지 않은 채 빈 줄로 저장된다(실측: 6행 요청 → 5행만 채움).
+    for _ in range(10):
+        if rows_loc.count() >= min(cur, R):
+            break
+        time.sleep(0.2)
+    actual_rows = rows_loc.count()
+    filled = missed = 0
+    for i, row in enumerate(norm):
+        if i >= actual_rows:
+            missed += sum(1 for c in row if c)
+            continue
+        tds = rows_loc.nth(i).locator("td")
+        for c in range(min(3, tds.count())):
             if not row[c]:
                 continue
-            try:
-                cells.nth(idx).click(timeout=2000)
-                time.sleep(0.08)
-                kb.insert_text(row[c])
-            except Exception as e:
-                log(f"  표 셀({i},{c}) 입력 실패: {str(e)[:40]}")
+            ok = False
+            for attempt in range(2):
+                try:
+                    tds.nth(c).click(timeout=2000)
+                    time.sleep(0.1)
+                    kb.insert_text(row[c])
+                    time.sleep(0.1)
+                    # 클릭이 셀에 포커스를 못 줘도 예외가 안 나므로, 들어갔는지 눈으로 확인한다.
+                    if (tds.nth(c).inner_text() or "").strip():
+                        ok = True
+                        break
+                except Exception as e:
+                    if attempt:
+                        log(f"  표 셀({i},{c}) 입력 실패: {str(e)[:40]}")
+            filled += 1 if ok else 0
+            missed += 0 if ok else 1
     # 표 밖(뒤에 만든 빈 문단)으로 커서 이동 — 실제 클릭이어야 에디터 커서가 옮겨진다.
     try:
         frame.locator(".se-component.se-text .se-text-paragraph").last.click(timeout=2000)
     except Exception as e:
         log(f"  표 뒤 문단 이동 실패: {str(e)[:40]}")
-    log(f"표 삽입: {R}행 3열")
+    # 요청 행수(R)가 아니라 실제로 만들어진 행수를 남긴다(잘렸는지 로그로 보이게).
+    note = f"표 삽입: {actual_rows}행 3열(요청 {R}행), {filled}칸 입력"
+    if missed:
+        note += f" — 빈 칸 {missed}개"
+    log(note)
 
 
 def _ensure_strike_off(frame, log):
@@ -645,16 +761,159 @@ def _insert_all_images(frame, page, paths, log):
     return done
 
 
-def _find_marker_paragraph(frame, n):
-    """본문에서 '[사진N]' 텍스트만 정확히 든 문단 element handle 을 찾는다(없으면 None).
+def _find_marker_paragraph(frame, n, label="사진"):
+    """본문에서 '[사진N]'(또는 '[상품N]') 텍스트만 정확히 든 문단 element handle 을 찾는다.
     text_content() 로 비교해 화면 밖 문단도 잡고, '==' 로 사진2/사진21 오매칭을 막는다."""
     for el in frame.query_selector_all(".se-text-paragraph"):
         try:
-            if (el.text_content() or "").strip() == f"[사진{n}]":
+            if (el.text_content() or "").strip() == f"[{label}{n}]":
                 return el
         except Exception:
             continue
     return None
+
+
+def _connect_count(frame):
+    """본문에 들어간 쇼핑커넥트 상품 카드 개수. 삽입 성공의 '진짜 증거'로 쓴다.
+
+    클래스 이름이 두 갈래다(실측): 에디터는 'se-shoppingConnect'(카멜), 발행된 글은
+    'se-shopping-connect'(케밥). 둘 다 잡아야 한다.
+    """
+    try:
+        return frame.evaluate(
+            "() => document.querySelectorAll("
+            "'.se-component.se-shoppingConnect, .se-component.se-shopping-connect').length"
+        )
+    except Exception:
+        return -1
+
+
+def _close_connect_popup(frame, page):
+    """쇼핑커넥트 팝업이 열려 있으면 닫는다(다음 단계의 클릭을 막지 않도록)."""
+    for sel in ("div[data-name='se-popup-shopping-connect'] button[class*=close]",
+                "div[data-name='se-popup-shopping-connect'] .se-popup-close-button"):
+        try:
+            loc = frame.locator(sel)
+            if loc.count() and loc.first.is_visible():
+                loc.first.click(timeout=2000)
+                return
+        except Exception:
+            continue
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+
+
+def _insert_shopping_connect(frame, page, query, log):
+    """커서가 놓인 자리에 쇼핑커넥트 상품 카드를 삽입한다. 성공하면 True.
+
+    실측 경로(2026-08): 툴바 shopping-connect → 팝업 검색창에 상품명 + Enter →
+    결과 li 의 add 버튼 → 확인창 '추가하기' → 커서 문단 바로 뒤에 카드가 들어간다.
+
+    유의(네이버 안내문):
+    - 상품 추가 시 쇼핑커넥트 링크가 즉시 발급된다(기발급 상품은 기존 링크 재사용).
+    - 카드를 넣으면 글 상단에 대가성 문구가 자동으로 붙는다.
+    - '내돈내산 글감' 첨부와는 동시에 쓸 수 없다.
+    커넥트 미대상 상품(예: 출판사 전집)은 검색 결과가 0건이라 False 를 돌려준다.
+    """
+    before = _connect_count(frame)
+    _force_dismiss_popups(frame, page, log)
+    try:
+        frame.locator("button[data-name='shopping-connect']").first.click(timeout=5000)
+    except Exception as e:
+        log(f"  쇼핑커넥트 버튼 클릭 실패: {str(e)[:60]}")
+        return False
+
+    pop = frame.locator("div[data-name='se-popup-shopping-connect']")
+    try:
+        pop.first.wait_for(state="visible", timeout=8000)
+    except Exception:
+        log("  쇼핑커넥트 팝업이 열리지 않음")
+        return False
+
+    try:
+        inp = pop.locator("input").first
+        inp.fill(query)
+        inp.press("Enter")
+    except Exception as e:
+        log(f"  쇼핑커넥트 검색 입력 실패: {str(e)[:60]}")
+        _close_connect_popup(frame, page)
+        return False
+
+    items = pop.locator("li.se-shopping-connect-item")
+    deadline = time.time() + 12
+    while time.time() < deadline and items.count() == 0:
+        time.sleep(0.5)
+    if items.count() == 0:
+        log(f"  '{query}': 쇼핑커넥트 검색 결과 0건(커넥트 미대상 상품)")
+        _close_connect_popup(frame, page)
+        return False
+
+    try:
+        items.first.locator("button.se-shopping-connect-item-add-button").click(timeout=5000)
+        time.sleep(1.5)
+        frame.locator("button:has-text('추가하기')").first.click(timeout=6000)
+    except Exception as e:
+        log(f"  '{query}' 추가 실패: {str(e)[:60]}")
+        _close_connect_popup(frame, page)
+        return False
+
+    # 카드가 실제로 늘었는지로 확인(클릭만으로는 거짓 성공이 남는다)
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        if before >= 0 and _connect_count(frame) > before:
+            _close_connect_popup(frame, page)
+            return True
+        time.sleep(0.5)
+    log(f"  '{query}': 추가 클릭했지만 카드가 본문에 안 보임")
+    _close_connect_popup(frame, page)
+    return False
+
+
+def _place_products(frame, page, products, log):
+    """본문의 '[상품N]' 마커 자리를 쇼핑커넥트 상품 카드로 교체한다.
+
+    products[n-1] 이 검색어(상품명). 마커를 못 찾거나 커넥트 미대상이면 그 마커는
+    본문에서 지우고(광고 티 나는 찌꺼기 방지) 로그로 알린다.
+    """
+    if not products:
+        return 0
+    kb = page.keyboard
+    placed, missed = 0, []
+    for n, query in enumerate(products, start=1):
+        query = (query or "").strip()
+        if not query:
+            continue
+        handle = _find_marker_paragraph(frame, n, label="상품")
+        if handle is None:
+            missed.append((n, query, "마커 문단 못 찾음"))
+            continue
+        try:
+            handle.evaluate("el => el.scrollIntoView({block: 'center'})")
+            time.sleep(0.2)
+            handle.click(timeout=4000, force=True)
+            # 마커 텍스트만 지우고 그 빈 자리(커서)에 상품 카드를 넣는다.
+            kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
+        except Exception as e:
+            missed.append((n, query, str(e)[:40]))
+            continue
+        if _insert_shopping_connect(frame, page, query, log):
+            placed += 1
+            log(f"  상품{n}: '{query}' 카드 삽입 완료")
+        else:
+            missed.append((n, query, "삽입 실패"))
+            # 빈 문단이 남으므로 지운다
+            try:
+                kb.press("Home"); kb.press("Shift+End"); kb.press("Delete")
+                kb.press("Backspace")
+            except Exception:
+                pass
+    for n, query, why in missed:
+        log(f"  상품{n}: '{query}' 미배치 — {why}")
+    log(f"쇼핑커넥트: {placed}/{len([q for q in products if (q or '').strip()])}개 배치"
+        + ("" if not missed else " (실패분은 마커를 지웠어요 — 직접 넣어주세요)"))
+    return placed
 
 
 def _para_text_styled(frame, text, min_px=17, min_weight=600):
@@ -731,7 +990,8 @@ def _focus_body_end(frame, log=None):
 
 
 def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
-                          subheadings=None, family="나눔스퀘어", size=16, hashtags=None):
+                          subheadings=None, family="나눔스퀘어", size=16, hashtags=None,
+                          products=None):
     """본문을 비비 글 형식으로 입력한다.
 
     구조: (협찬 고지문 회색) → 큰 제목(나눔명조24 볼드) → 요약(회색 나눔명조11)
@@ -791,6 +1051,18 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     intro = lines[:g_idx] if g_idx is not None else []
     rest_text = "\n".join(lines[g_idx:]) if g_idx is not None else body
 
+    # 인트로(큰 제목/회색 요약 블록)에 들어간 [인용] 블록은 인사말 뒤로 옮긴다.
+    # 인트로에 그대로 두면 '큰 제목' 텍스트로 타이핑돼 제목이 오염되고, 토큰 루프를
+    # 안 타서 인용구 컴포넌트도 안 만들어진다(생성기가 맨 위에 붙이는 경우 대비).
+    if intro:
+        intro_joined = "\n".join(intro)
+        quotes = re.findall(r"\[인용\][\s\S]*?\[/인용\]", intro_joined)
+        if quotes:
+            intro = re.sub(r"\[인용\][\s\S]*?\[/인용\]", "", intro_joined).split("\n")
+            r_lines = rest_text.split("\n")
+            rest_text = "\n".join(r_lines[:1] + [""] + quotes + [""] + r_lines[1:])
+            log(f"인트로의 인용구 {len(quotes)}개를 인사말 뒤로 옮김(제목 오염 방지).")
+
     # 인트로(제목/요약 블록)에 섞인 [사진N] 마커는 본문 앞쪽으로 옮긴다. 인트로에 그대로
     # 두면 '큰 제목' 텍스트로 타이핑되고(사진은 안 들어감), PASS 2 대상(used)에도 안 잡혀
     # 사진이 끝모음으로 밀린다. (앱 '썸네일 만들기'가 대표사진 마커를 맨 위에 넣는 경우 대비)
@@ -811,7 +1083,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     # [사진N] 마커를 반드시 '자기 줄'로 분리한다. 생성기가 "...했어요. [사진1]" 처럼
     # 본문과 같은 줄에 붙여 쓰면 PASS 2 가 마커 문단(정확히 '[사진N]')을 못 찾아 재삽입에
     # 실패하던 문제 해결 → 앞뒤에 줄바꿈을 넣어 마커가 독립 문단이 되게 한다.
-    rest_text = re.sub(r"[ \t]*(\[사진\s*\d+\])[ \t]*", r"\n\1\n", rest_text)
+    rest_text = re.sub(r"[ \t]*(\[(?:사진|상품)\s*\d+\])[ \t]*", r"\n\1\n", rest_text)
     rest_text = re.sub(r"\n{3,}", "\n\n", rest_text)
 
     # 인트로 = 인사말 전까지. 고지문(회색) → 큰 제목(첫 블록, 나눔명조30 블랙)
@@ -855,13 +1127,31 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     inserted = 0
     used = set()    # 본문에서 참조된 사진 번호(마커로 남겨둔 것)
     failed = set()  # PASS 2 재삽입 실패 → 끝에 모아 업로드
-    tokens = re.split(r"(\[표\][\s\S]*?\[/표\]|\[사진\s*\d+\]|\[영상\s*\d+\])", rest_text)
+    tokens = re.split(
+        r"(\[표\][\s\S]*?\[/표\]|\[인용\][\s\S]*?\[/인용\]|\[사진\s*\d+\]"
+        r"|\[영상\s*\d+\]|\[상품\s*\d+\])",
+        rest_text,
+    )
     dup_caption = None  # 직전 사진의 회색 캡션 — 본문에 같은 줄이 또 오면 1회 건너뛴다
     for tok in tokens:
         mt = re.match(r"\[표\]([\s\S]*?)\[/표\]", tok)
+        mq = re.match(r"\[인용\]([\s\S]*?)\[/인용\]", tok)
         mp = re.match(r"\[사진\s*(\d+)\]", tok)
         mv = re.match(r"\[영상\s*(\d+)\]", tok)
-        if mt:
+        mc = re.match(r"\[상품\s*(\d+)\]", tok)
+        if mq:
+            quote = "\n".join(l.strip() for l in mq.group(1).strip().split("\n") if l.strip())
+            if quote:
+                try:
+                    ok = _insert_quote(frame, page, quote, log)
+                except Exception as e:
+                    log(f"  인용구 삽입 실패({str(e)[:50]}) → 본문 텍스트로 대체")
+                    _focus_body_end(frame, log)
+                    ok = False
+                body_on()
+                if not ok:
+                    _type_lines(kb, quote); kb.press("Enter")
+        elif mt:
             table_rows = _parse_table_block(mt.group(1))
             if table_rows:
                 try:
@@ -892,6 +1182,9 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 kb.insert_text(tok)
         elif mv:
             kb.insert_text(tok)  # 영상은 마커 유지(수동)
+        elif mc:
+            # 상품 자리는 '[상품N]' 마커만 자기 문단에 남긴다(실제 카드는 PASS 3).
+            body_on(); kb.insert_text(f"[상품{int(mc.group(1))}]")
         else:
             body_lines = tok.split("\n")
             for i, line in enumerate(body_lines):
@@ -1058,6 +1351,12 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         except Exception as e:
             log(f"남은 사진 업로드 실패({e}). 본문 [사진N] 위치에 직접 넣어주세요.")
 
+    # ── PASS 3: '[상품N]' 마커를 쇼핑커넥트 상품 카드로 교체한다. ──
+    # 사진 작업이 다 끝난 뒤에 한다(사진 삽입이 문단을 흔들어 마커 위치가 밀리므로).
+    connect_placed = 0
+    if products:
+        connect_placed = _place_products(frame, page, products, log)
+
     # 해시태그: 네이버 글쓰기(임시저장) 에디터는 본문 '#단어'를 태그 칩으로 즉시 바꾸지
     # 않는다(자동화의 합성 이벤트를 태그 변환기가 무시 — 실측으로 Space/Enter 모두 변환 안 됨).
     # 대신 '발행' 시 본문의 '#단어'가 태그로 등록된다 → 비비 발행글처럼 '한 줄에 하나씩' 맨 끝에
@@ -1075,7 +1374,8 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     else:
         mode_desc = "결정적(전부 끝모음, 본문에 [사진N] 안내)"
     log(f"본문 입력 완료. 사진 {inserted}장 삽입({mode_desc}), "
-        f"소제목 {len(sub_set)}개 스타일, 해시태그 {len(tags)}개.")
+        f"소제목 {len(sub_set)}개 스타일, 해시태그 {len(tags)}개"
+        + (f", 쇼핑커넥트 {connect_placed}개." if products else "."))
     return True
 
 
@@ -1303,6 +1603,7 @@ def run_job(job_dir: str, interactive: bool = True):
             family=job.get("font", "나눔스퀘어"),
             size=job.get("size", 16),
             hashtags=job.get("hashtags") or [],
+            products=job.get("products") or [],
         )
         _shot(page, job_dir, "02_text_and_photos")
 
