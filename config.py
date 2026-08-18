@@ -46,6 +46,10 @@ ENABLE_RESEARCH = os.getenv("ENABLE_RESEARCH", "1").strip() not in ("0", "false"
 BENCHMARK_MODEL = "claude-sonnet-4-6"
 # 벤치마킹 기능 on/off (끄면 벤치마킹 단계 건너뜀). env 로 덮어쓸 수 있다.
 ENABLE_BENCHMARK = os.getenv("ENABLE_BENCHMARK", "1").strip() not in ("0", "false", "False", "")
+# NAEO 인용 조건 검수 + 밀도 보정(modules/naeo_audit.py). 초안을 세어보고 미달이면 1회 고쳐 쓴다.
+# 보정은 창작이 아니라 '이미 있는 수치로 문장 고쳐쓰기'라 Opus까지 필요 없다 → Sonnet.
+NAEO_AUDIT_MODEL = "claude-sonnet-4-6"
+ENABLE_NAEO_AUDIT = os.getenv("ENABLE_NAEO_AUDIT", "1").strip() not in ("0", "false", "False", "")
 # 네이버 사진 배치 방식. 기본 0(결정적): 마커 교체 안 하고 [사진N] 글자 마커를 자리 안내로
 # 남긴 뒤 모든 사진을 순서대로 글 끝에 모아 사용자가 드래그. 1이면 best-effort 인라인 시도
 # (네이버 에디터가 불안정해 실행마다 결과가 달라짐).
@@ -58,6 +62,18 @@ NAVER_PHOTO_INLINE = os.getenv("NAVER_PHOTO_INLINE", "0").strip() in ("1", "true
 NAVER_PHOTO_REARRANGE = os.getenv("NAVER_PHOTO_REARRANGE", "1").strip() in ("1", "true", "True")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+
+# --- 숏폼(원소스 멀티유즈) ------------------------------------------------
+# 발행 글 → 숏폼 대본. 연출 판단이라 문체 모델(Opus)까지는 필요 없고 Sonnet 이면 충분하다.
+SHORTFORM_MODEL = "claude-sonnet-4-6"
+# 사진 → 영상 변환 엔진. Veo 는 출력 '초당' 과금이라 등급 차이가 그대로 비용이다
+# (2026-08 기준 720p: lite $0.05/s, fast $0.10/s, standard $0.40/s).
+# 전 컷을 움직이지 않고 motion_worth=high 인 컷만 변환한다(modules/shortform.py).
+VIDEO_ENGINE = os.getenv("VIDEO_ENGINE", "veo").strip()          # veo | none
+VEO_MODEL = os.getenv("VEO_MODEL", "veo-3.1-fast-generate-001").strip()
+VEO_RESOLUTION = os.getenv("VEO_RESOLUTION", "720p").strip()
+# 나레이션: "subtitle"(자막만) | "tts"(AI 성우). 만들 때마다 앱에서 고른다 — 여기는 기본값.
+SHORTFORM_NARRATION = os.getenv("SHORTFORM_NARRATION", "subtitle").strip()
 
 # --- 경로 -----------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
