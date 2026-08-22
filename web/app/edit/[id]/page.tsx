@@ -421,15 +421,6 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         </div>
       )}
 
-      <ProductShots
-        id={id}
-        hasLink={Boolean(
-          String(
-            (draft.data?.request as { product_link?: unknown } | undefined)?.product_link ?? "",
-          ).trim(),
-        )}
-      />
-
       <input
         value={title}
         onChange={(e) => {
@@ -522,6 +513,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         getBody={() => body}
         getData={() => draft.data ?? {}}
         onApplied={onThumbApplied}
+      />
+
+      <ProductShots
+        id={id}
+        hasLink={Boolean(
+          String(
+            (draft.data?.request as { product_link?: unknown } | undefined)?.product_link ?? "",
+          ).trim(),
+        )}
       />
 
       <div className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">

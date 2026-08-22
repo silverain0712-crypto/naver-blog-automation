@@ -60,7 +60,7 @@ export default function ProductShots({ id, hasLink }: { id: string; hasLink: boo
   const hasShots = shots.length > 0;
 
   return (
-    <section className="mb-3 rounded-lg border border-neutral-200 bg-white">
+    <section className="mt-4 rounded-lg border border-neutral-200 bg-white">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
