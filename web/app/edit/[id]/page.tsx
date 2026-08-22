@@ -96,6 +96,18 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     else if (res.ok) editedRef.current = false;
   }
 
+  // 실패한 글을 실패한 단계로 되돌려 다시 시도한다.
+  async function retry() {
+    setSaving(true);
+    const res = await fetch(`/api/drafts/${id}/retry`, { method: "POST" });
+    setSaving(false);
+    if (res.ok) load();
+    else {
+      const { error } = await res.json().catch(() => ({ error: "다시 시도 실패" }));
+      setLoadErr(error ?? "다시 시도 실패");
+    }
+  }
+
   // 초안 확인 후 수정 요청 → 기존 초안 + 요청을 맥에 보내 다시 쓰게 한다(status='generating').
   async function requestRevision() {
     const text = revisionReq.trim();
@@ -214,12 +226,38 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   }
 
   if (draft.status === "error") {
+    const stage =
+      typeof d.error_stage === "string"
+        ? d.error_stage
+        : (draft.body ?? "").trim()
+          ? "post"
+          : "generate";
     return (
       <main className="mx-auto max-w-lg p-6">
-        <p className="mb-2 font-medium text-red-600">생성 실패</p>
+        <p className="mb-2 font-medium text-red-600">
+          {stage === "generate" ? "초안 생성 실패" : "네이버 저장 실패"}
+        </p>
         <p className="text-sm text-neutral-600">{d.error ?? "알 수 없는 오류"}</p>
-        <Link href="/" className="mt-4 inline-block text-sm text-blue-600">
-          ← 새 글 쓰기
+
+        <button
+          onClick={retry}
+          disabled={saving}
+          className="mt-4 w-full rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {saving
+            ? "시작하는 중…"
+            : stage === "generate"
+              ? "초안 다시 쓰기"
+              : "네이버 저장 다시 시도"}
+        </button>
+        <p className="mt-2 text-xs text-neutral-500">
+          {stage === "generate"
+            ? "맥 생성기가 초안을 처음부터 다시 씁니다."
+            : "맥이 켜져 있고 네이버 로그인이 살아 있어야 합니다."}
+        </p>
+
+        <Link href="/list" className="mt-4 inline-block text-sm text-blue-600">
+          ← 목록
         </Link>
       </main>
     );

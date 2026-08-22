@@ -33,7 +33,11 @@ from modules import store
 DEFAULT_DAYS = 7
 
 KEEP_STATUSES = {"photo_stash"}
-PURGEABLE_STATUSES = {"posted", "error"}
+
+# 상태별 보관 기간. 실패한 글은 폰에서 '다시 시도'를 누를 수 있어야 하고, 사진이
+# 사라지면 재시도해도 글만 저장된다. 그래서 발행 완료분보다 길게 둔다.
+PURGE_AFTER = {"posted": DEFAULT_DAYS, "error": 30}
+PURGEABLE_STATUSES = set(PURGE_AFTER)
 
 
 class Restricted(RuntimeError):
@@ -71,8 +75,11 @@ def _files(prefix: str) -> list[dict]:
             if (it.get("metadata") or {}).get("size") is not None]
 
 
-def plan(days: int = DEFAULT_DAYS) -> dict:
+def plan(days: int | None = None) -> dict:
     """무엇을 지우고 무엇을 남길지 계산만 한다(삭제 없음).
+
+    days 를 주면 모든 상태에 그 기준을 쓴다(수동 일괄 정리용). 안 주면 PURGE_AFTER 의
+    상태별 기간을 따른다.
 
     반환: {"total": 바이트, "purge": [(id, 사유, 파일수, 바이트)], "keep": [(id, 사유, 바이트)]}
     """
@@ -88,7 +95,11 @@ def plan(days: int = DEFAULT_DAYS) -> dict:
         raise
 
     by_id = {d["id"]: d for d in drafts}
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    now = datetime.now(timezone.utc)
+
+    def cutoff_for(status: str) -> datetime:
+        span = days if days is not None else PURGE_AFTER.get(status, DEFAULT_DAYS)
+        return now - timedelta(days=span)
     purge: list[tuple[str, str, int, int]] = []
     keep: list[tuple[str, str, int]] = []
     total = 0
@@ -113,8 +124,8 @@ def plan(days: int = DEFAULT_DAYS) -> dict:
             keep.append((name, f"보관 사진({status})", size))
             continue
         created = _parse_ts(draft.get("created_at") or "")
-        if status in PURGEABLE_STATUSES and created and created < cutoff:
-            age = (datetime.now(timezone.utc) - created).days
+        if status in PURGEABLE_STATUSES and created and created < cutoff_for(status):
+            age = (now - created).days
             purge.append((name, f"{status} {age}일 지남", len(files), size))
         else:
             keep.append((name, status, size))
@@ -135,7 +146,7 @@ def delete(folders: list[str]) -> int:
     return freed
 
 
-def run(days: int = DEFAULT_DAYS, log=None) -> int:
+def run(days: int | None = None, log=None) -> int:
     """계산 → 삭제까지 한 번에. 회수한 바이트 반환. 워커가 주기적으로 부른다."""
     result = plan(days)
     targets = [r[0] for r in result["purge"]]

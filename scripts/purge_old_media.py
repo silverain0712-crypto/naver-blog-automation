@@ -22,8 +22,9 @@ from modules import media_gc  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Supabase media 버킷 정리")
-    ap.add_argument("--days", type=int, default=media_gc.DEFAULT_DAYS,
-                    help=f"네이버 저장(posted) 후 이 일수가 지나면 삭제 대상 (기본 {media_gc.DEFAULT_DAYS})")
+    ap.add_argument("--days", type=int, default=None,
+                    help="모든 상태에 이 일수를 적용(수동 일괄 정리용). "
+                         f"안 주면 상태별 기본값: {media_gc.PURGE_AFTER}")
     ap.add_argument("--apply", action="store_true", help="실제로 삭제 (기본은 미리보기)")
     args = ap.parse_args()
 

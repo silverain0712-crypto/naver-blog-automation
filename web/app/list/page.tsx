@@ -25,6 +25,21 @@ const badgeColor: Record<string, string> = {
 
 export default function ListPage() {
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  // 실패한 글을 실패한 단계로 되돌린다(초안 쓰기 또는 네이버 저장).
+  async function retry(id: string) {
+    setRetrying(id);
+    const res = await fetch(`/api/drafts/${id}/retry`, { method: "POST" });
+    setRetrying(null);
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({ error: "다시 시도 실패" }));
+      alert(error ?? "다시 시도 실패");
+      return;
+    }
+    const list = await fetch("/api/drafts", { cache: "no-store" });
+    if (list.ok) setDrafts((await list.json()).drafts);
+  }
 
   useEffect(() => {
     let stop = false;
@@ -60,7 +75,7 @@ export default function ListPage() {
 
       <ul className="flex flex-col gap-2">
         {drafts?.map((d) => (
-          <li key={d.id}>
+          <li key={d.id} className="relative">
             <Link
               href={`/edit/${d.id}`}
               className="flex items-center justify-between rounded-lg border border-neutral-200 p-3"
@@ -90,6 +105,16 @@ export default function ListPage() {
                 {STATUS_LABEL[d.status] ?? d.status}
               </span>
             </Link>
+            {d.status === "error" && (
+              <button
+                type="button"
+                onClick={() => retry(d.id)}
+                disabled={retrying === d.id}
+                className="absolute bottom-2 right-3 rounded-full border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-600 disabled:opacity-50"
+              >
+                {retrying === d.id ? "시작하는 중…" : "다시 시도"}
+              </button>
+            )}
           </li>
         ))}
       </ul>

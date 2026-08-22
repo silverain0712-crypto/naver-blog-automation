@@ -188,7 +188,7 @@ def main():
                     print(f"  ✅ 임시저장 완료: {title}")
                 except Exception as e:
                     msg = str(e)[:300]
-                    data = {**(row.get("data") or {}), "error": msg}
+                    data = {**(row.get("data") or {}), "error": msg, "error_stage": "post"}
                     store.update_draft(row["id"], {"status": "error", "data": data})
                     print(f"  ⚠️ 실패: {msg}")
         except Exception as e:

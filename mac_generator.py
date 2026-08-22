@@ -338,7 +338,7 @@ def main():
                                 raise
                 except Exception as e:
                     msg = str(e)[:300]
-                    data = {**(row.get("data") or {}), "error": msg}
+                    data = {**(row.get("data") or {}), "error": msg, "error_stage": "generate"}
                     store.update_draft(row["id"], {"status": "error", "data": data})
                     print(f"  ⚠️ 실패: {msg}")
         except Exception as e:
