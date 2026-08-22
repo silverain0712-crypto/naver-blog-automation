@@ -11,6 +11,7 @@ import {
   PHOTO_STYLES,
 } from "@/lib/constants";
 import ThumbnailBuilder from "./ThumbnailBuilder";
+import ProductShots from "./ProductShots";
 
 type Draft = {
   id: string;
@@ -381,6 +382,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
           ))}
         </div>
       )}
+
+      <ProductShots
+        id={id}
+        hasLink={Boolean(
+          String(
+            (draft.data?.request as { product_link?: unknown } | undefined)?.product_link ?? "",
+          ).trim(),
+        )}
+      />
 
       <input
         value={title}

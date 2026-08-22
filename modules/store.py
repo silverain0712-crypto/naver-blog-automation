@@ -56,6 +56,12 @@ def _upload(path: str, data: bytes, content_type: str) -> str:
     return path
 
 
+def upload_bytes(path: str, data: bytes, content_type: str) -> str:
+    """media 버킷에 바이트를 올린다(덮어쓰기). 저장 경로 반환."""
+    _require()
+    return _upload(path, data, content_type)
+
+
 def list_prefix(prefix: str = "", limit: int = 1000) -> list[dict]:
     """media 버킷에서 prefix 아래 항목 목록. 파일이면 metadata.size 가 채워지고,
     하위 폴더면 metadata 가 None 이다(Storage list API 규약)."""
@@ -155,6 +161,20 @@ def list_drafts(status: str | None = None) -> list[dict]:
     url = f"{config.SUPABASE_URL}/rest/v1/drafts?select=*&order=created_at.desc"
     if status:
         url += f"&status=eq.{status}"
+    r = httpx.get(url, headers=_rest_headers(), timeout=_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def list_image_jobs(status: str = "requested") -> list[dict]:
+    """data.image_job.status 가 주어진 값인 초안들(오래된 순).
+
+    사진 생성은 초안의 status 를 건드리지 않는다 — 초안 상태(draft_ready 등)를
+    유지한 채 사진만 따로 만들기 위해서다. 그래서 별도 JSON 필드로 신호를 준다.
+    """
+    _require()
+    url = (f"{config.SUPABASE_URL}/rest/v1/drafts"
+           f"?select=*&data->image_job->>status=eq.{status}&order=created_at.asc")
     r = httpx.get(url, headers=_rest_headers(), timeout=_TIMEOUT)
     r.raise_for_status()
     return r.json()

@@ -215,6 +215,7 @@ export default function NewPostPage() {
         photoMimes: pics.map((p) => p.file.type),
         guidelineNames: guideFiles.map((f) => f.name),
         guidelineText: guideText.trim(),
+        generateShots: Boolean(fd.get("generate_shots")) && Boolean(str("product_link")),
       },
       memo: str("memo"),
     };
@@ -412,6 +413,15 @@ export default function NewPostPage() {
         <label className="flex flex-col gap-1">
           <span className={labelC}>상품/필수 링크 (선택)</span>
           <input name="product_link" className={field} placeholder="상품 링크" />
+          <label className="mt-1 flex items-start gap-2 text-sm text-neutral-600">
+            <input type="checkbox" name="generate_shots" className="mt-1" />
+            <span>
+              이 링크로 <strong className="font-medium">상품 상세컷 3장</strong>도 만들기
+              <span className="block text-xs text-neutral-500">
+                실제 상품 사진을 가져와 그 제품 그대로 만듭니다. 직접 찍으셨으면 체크 안 해도 됩니다.
+              </span>
+            </span>
+          </label>
           <textarea
             name="required_links"
             className={`${field} min-h-16 mt-1`}

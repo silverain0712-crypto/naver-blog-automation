@@ -61,7 +61,7 @@ NAVER_PHOTO_INLINE = os.getenv("NAVER_PHOTO_INLINE", "0").strip() in ("1", "true
 # 25장/표/소제목 모두 제자리 배치 검증됨. 끄려면 NAVER_PHOTO_REARRANGE=0)
 NAVER_PHOTO_REARRANGE = os.getenv("NAVER_PHOTO_REARRANGE", "1").strip() in ("1", "true", "True")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
-GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"   # 레퍼런스 이미지를 받아 상세컷 생성(modules/product_shots.py)
 
 # --- 숏폼(원소스 멀티유즈) ------------------------------------------------
 # 발행 글 → 숏폼 대본. 연출 판단이라 문체 모델(Opus)까지는 필요 없고 Sonnet 이면 충분하다.

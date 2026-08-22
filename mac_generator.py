@@ -15,6 +15,7 @@ import time
 import config
 from modules import store
 from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher, benchmark, keyword_stats
+from modules import product_info, product_shots
 from prompts.post_structures import get_structure
 from modules.llm import _RETRYABLE
 
@@ -210,6 +211,105 @@ def handle_learn_requests() -> None:
         })
 
 
+
+def _product_reference(row: dict, link: str) -> tuple[bytes, str]:
+    """상품 링크에서 대표 사진과 상품명을 확보한다. 한 번 받아오면 버킷에 캐시한다.
+
+    피드백으로 다시 만들 때마다 상품 페이지를 다시 긁을 이유가 없다(느리고, 네이버에
+    불필요한 요청을 보낸다). 그래서 {draft_id}/ref.jpg 로 저장해 두고 재사용한다.
+    """
+    data = row.get("data") or {}
+    cached = data.get("product_ref") or {}
+    if cached.get("path"):
+        try:
+            return store.download(cached["path"]), cached.get("name", "")
+        except Exception as e:
+            print(f"  캐시된 레퍼런스 사용 실패({str(e)[:60]}) — 다시 가져옵니다")
+
+    print(f"  상품 링크 확인: {link[:70]}")
+    info = product_info.fetch(link, log=lambda m: print(f"  {m}"))
+    if not info.images:
+        raise RuntimeError("상품 페이지에서 사진을 찾지 못했습니다.")
+    ref = product_info.download(info.images[0])
+    path = store.upload_bytes(f"{row['id']}/ref.jpg", ref, "image/jpeg")
+    store.update_draft(row["id"], {"data": {
+        **data, "product_ref": {"path": path, "name": info.name, "url": info.url},
+    }})
+    row["data"] = {**data, "product_ref": {"path": path, "name": info.name, "url": info.url}}
+    return ref, info.name
+
+
+def _finish_shot_job(row: dict, patch: dict) -> None:
+    store.update_draft(row["id"], {"data": {**(row.get("data") or {}), **patch}})
+
+
+def handle_shot_requests() -> None:
+    """폰 '상품 사진 생성' 버튼(data.image_job.status='requested')을 처리.
+
+    초안 status 는 건드리지 않는다 — 글은 그대로 두고 사진만 만든다.
+    target 이 있으면 그 사진 한 장만 피드백을 반영해 다시 만든다.
+    """
+    for row in store.list_image_jobs("requested"):
+        data = row.get("data") or {}
+        job = data.get("image_job") or {}
+        link = ((data.get("request") or {}).get("product_link") or "").strip()
+        target = job.get("target")
+        stamp = f"[{datetime.datetime.now():%H:%M:%S}]"
+        print(f"\n{stamp} 🖼  상품 사진 요청: {row['id'][:8]}"
+              f"{' (재생성 #' + str(target) + ')' if target is not None else ''}")
+
+        _finish_shot_job(row, {"image_job": {**job, "status": "running"}})
+        try:
+            if not product_shots.enabled():
+                raise RuntimeError("GEMINI_API_KEY 가 없습니다(.env 확인).")
+            if not link:
+                raise RuntimeError("상품 링크가 없습니다. 글감에 링크를 넣어주세요.")
+
+            ref, name = _product_reference(row, link)
+            data = row.get("data") or {}
+            shots = list(data.get("product_shots") or [])
+
+            if target is not None and 0 <= target < len(shots):
+                # 피드백 반영 재생성 — 해당 한 장만 교체한다.
+                old = shots[target]
+                # 피드백은 쌓는다 — '배경 밝게' 뒤에 '각도 위에서' 를 주면 둘 다 반영된다.
+                # 서로 충돌하면 나중에 적은 쪽이 뒤에 붙어 우선한다.
+                prev_fb = (old.get("feedback") or "").strip()
+                new_fb = (job.get("feedback") or "").strip()
+                feedback = f"{prev_fb} {new_fb}".strip() if prev_fb else new_fb
+                new_bytes = product_shots.revise(ref, old.get("prompt", ""), feedback)
+                # 같은 경로에 덮어쓰면 스토리지 캐시가 물려 폰에 옛 사진이 계속 보인다.
+                # 그래서 회차를 경로에 넣고, 성공한 뒤 이전 파일을 지운다.
+                rev = int(old.get("rev", 0)) + 1
+                path = store.upload_bytes(f"{row['id']}/shot_{target + 1}_r{rev}.png",
+                                          new_bytes, "image/png")
+                if old.get("path") and old["path"] != path:
+                    try:
+                        store.remove_paths([old["path"]])
+                    except Exception as e:
+                        print(f"  이전 사진 정리 실패(무시): {str(e)[:60]}")
+                shots[target] = {**old, "path": path, "feedback": feedback, "rev": rev}
+                print(f"  ✅ #{target + 1} 재생성 완료: {feedback[:40]}")
+            else:
+                count = int(job.get("count") or 3)
+                made = product_shots.make(ref, name, count)
+                shots = []
+                for i, shot in enumerate(made, start=1):
+                    path = store.upload_bytes(f"{row['id']}/shot_{i}.png", shot.data, "image/png")
+                    shots.append({"path": path, "key": shot.key, "label": shot.label,
+                                  "prompt": shot.prompt, "feedback": "", "rev": 0})
+                print(f"  ✅ 상세컷 {len(shots)}장 완성 ({name[:30]})")
+
+            _finish_shot_job(row, {
+                "product_shots": shots,
+                "image_job": {**job, "status": "done", "error": ""},
+            })
+        except Exception as e:
+            msg = str(e)[:300]
+            _finish_shot_job(row, {"image_job": {**job, "status": "error", "error": msg}})
+            print(f"  ⚠️ 사진 생성 실패: {msg}")
+
+
 def main():
     if not store.enabled():
         print("Supabase 미설정(.env 확인). 종료합니다.")
@@ -219,6 +319,7 @@ def main():
     while True:
         try:
             handle_learn_requests()
+            handle_shot_requests()
             rows = store.list_drafts("generating")
             for row in rows:
                 title_hint = ((row.get("data") or {}).get("request") or {}).get("memo", "")[:30]

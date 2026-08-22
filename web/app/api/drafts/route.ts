@@ -82,6 +82,9 @@ export async function POST(req: NextRequest) {
       guideline_paths.push(path);
     }
 
+    // 상품 링크로 상세컷도 만들지 여부. 맥 생성기가 data.image_job 을 보고 처리한다.
+    const wantShots = Boolean(b.generateShots) && Boolean(request.product_link);
+
     const needUpload = photoCount > 0 || guidelineUploads.length > 0;
     await insertDraft({
       id: draft_id,
@@ -98,6 +101,9 @@ export async function POST(req: NextRequest) {
           guideline_path: guideline_paths[0] ?? "",
           guideline_name: guidelineNames[0] ?? "",
         },
+        ...(wantShots
+          ? { image_job: { status: "requested", count: 3, feedback: "", error: "" } }
+          : {}),
       },
       images: imagePaths,
       thumbnail: null,
