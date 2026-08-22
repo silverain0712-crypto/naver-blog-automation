@@ -59,7 +59,34 @@ export async function updateDraft(id: string, fields: Partial<Draft>): Promise<v
   if (error) throw new Error(`updateDraft: ${error.message}`);
 }
 
+// 초안 폴더({id}/) 안의 모든 객체를 스토리지에서 제거하고 지운 개수를 돌려준다.
+// DB 행만 지우면 사진이 버킷에 영구 누적돼 무료 한도(1GB)를 넘긴다.
+export async function removeDraftFiles(id: string): Promise<number> {
+  const paths: string[] = [];
+  const page = 100;
+  for (let offset = 0; ; offset += page) {
+    const { data, error } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .list(id, { limit: page, offset });
+    if (error) throw new Error(`removeDraftFiles(list ${id}): ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const it of data) paths.push(`${id}/${it.name}`);
+    if (data.length < page) break;
+  }
+  if (paths.length === 0) return 0;
+  const { error } = await supabase.storage.from(SUPABASE_BUCKET).remove(paths);
+  if (error) throw new Error(`removeDraftFiles(remove ${id}): ${error.message}`);
+  return paths.length;
+}
+
 export async function deleteDraft(id: string): Promise<void> {
+  // 사진을 먼저 정리한다. 실패해도 DB 행 삭제는 진행 — 남은 고아 파일은
+  // scripts/purge_old_media.py 가 회수한다.
+  try {
+    await removeDraftFiles(id);
+  } catch (e) {
+    console.warn(`[db] deleteDraft: 스토리지 정리 실패 ${id}`, e);
+  }
   const { error } = await supabase.from("drafts").delete().eq("id", id);
   if (error) throw new Error(`deleteDraft: ${error.message}`);
 }

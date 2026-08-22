@@ -61,6 +61,10 @@ async function decode(file: File): Promise<Decoded> {
 
 // 폰 원본(3~4MB, HEIC 포함)을 1600px JPEG 로 축소 → 업로드 가볍게 + 포맷/회전 정규화.
 // (네이버도 최종 1600px JPEG 로 올리므로 화질 손실 없음)
+// GIF 는 애니메이션 유지 때문에 원본 그대로 올라간다(축소 불가).
+// 움짤 몇 개로 Supabase 무료 한도(1GB)를 태울 수 있어 장당 상한을 둔다.
+const GIF_MAX_BYTES = 10 * 1024 * 1024;
+
 async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<Blob> {
   const src = await decode(file);
   let w = src.w;
@@ -121,7 +125,18 @@ export default function NewPostPage() {
     if (!list || list.length === 0) return;
     const imgs = Array.from(list).filter((f) => f.type.startsWith("image/"));
     if (imgs.length === 0) return;
-    const next = imgs.map((f) => ({ file: f, url: URL.createObjectURL(f) }));
+    const tooBig = imgs.filter((f) => f.type === "image/gif" && f.size > GIF_MAX_BYTES);
+    const ok = imgs.filter((f) => !tooBig.includes(f));
+    if (tooBig.length > 0) {
+      const mb = (GIF_MAX_BYTES / 1024 / 1024).toFixed(0);
+      setErr(
+        `움짤 ${tooBig.length}개가 ${mb}MB를 넘어 제외했습니다` +
+          `(${tooBig.map((f) => `${f.name} ${(f.size / 1024 / 1024).toFixed(1)}MB`).join(", ")}).` +
+          ` 길이나 화질을 줄여서 다시 넣어주세요.`,
+      );
+    }
+    if (ok.length === 0) return;
+    const next = ok.map((f) => ({ file: f, url: URL.createObjectURL(f) }));
     setPics((prev) => [...prev, ...next]);
   }
   function removePic(i: number) {

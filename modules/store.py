@@ -56,6 +56,40 @@ def _upload(path: str, data: bytes, content_type: str) -> str:
     return path
 
 
+def list_prefix(prefix: str = "", limit: int = 1000) -> list[dict]:
+    """media 버킷에서 prefix 아래 항목 목록. 파일이면 metadata.size 가 채워지고,
+    하위 폴더면 metadata 가 None 이다(Storage list API 규약)."""
+    _require()
+    url = f"{config.SUPABASE_URL}/storage/v1/object/list/{config.SUPABASE_BUCKET}"
+    out: list[dict] = []
+    offset = 0
+    while True:
+        body = {
+            "prefix": prefix,
+            "limit": limit,
+            "offset": offset,
+            "sortBy": {"column": "name", "order": "asc"},
+        }
+        r = httpx.post(url, json=body, headers=_rest_headers(), timeout=_TIMEOUT)
+        r.raise_for_status()
+        items = r.json()
+        out.extend(items)
+        if len(items) < limit:
+            return out
+        offset += limit
+
+
+def remove_paths(paths: list[str]) -> None:
+    """media 버킷에서 객체 여러 개 삭제."""
+    _require()
+    if not paths:
+        return
+    url = f"{config.SUPABASE_URL}/storage/v1/object/{config.SUPABASE_BUCKET}"
+    r = httpx.request("DELETE", url, json={"prefixes": paths},
+                      headers=_rest_headers(), timeout=_TIMEOUT)
+    r.raise_for_status()
+
+
 def download(path: str) -> bytes:
     """media 버킷에서 객체 내려받기. 간헐 SSL/연결 오류는 재시도."""
     _require()

@@ -17,10 +17,13 @@ import subprocess
 import time
 
 import config
-from modules import store
+from modules import media_gc, store
 from modules.naver_blog_writer import run_job
 
 POLL_SECONDS = 30
+# 네이버 저장이 끝난 글의 사진을 Supabase 에서 회수하는 주기. 무료 한도(1GB)를 넘기면
+# 프로젝트가 잠겨 폰 앱이 통째로 멈추므로 워커가 알아서 치운다(modules/media_gc.py).
+GC_SECONDS = 6 * 60 * 60
 # 크롬 프로필(~/.naver_blog_automation/userdata)은 잡 하나만 쓸 수 있다. 다른 naver_run.py 가
 # 이 시간보다 오래 떠 있으면 죽은 잡으로 보고 정리한다(정상 잡은 보통 몇 분 안에 끝난다).
 STALE_JOB_SECONDS = 30 * 60
@@ -161,7 +164,16 @@ def main():
         return
     print("🟢 맥 자동 포스터 워커 시작 — 폰에서 '맥 자동저장' 요청한 글을 처리합니다.")
     print(f"   {POLL_SECONDS}초마다 확인 / 종료: Ctrl+C")
+    print(f"   발행 {media_gc.DEFAULT_DAYS}일 지난 글의 사진은 자동으로 정리합니다.")
+    next_gc = 0.0
     while True:
+        if time.monotonic() >= next_gc:
+            next_gc = time.monotonic() + GC_SECONDS
+            try:
+                media_gc.run(log=lambda m: print(f"  🧹 {m}"))
+            except Exception as e:
+                # 정리는 부가 작업이다 — 실패해도 저장 처리는 계속한다.
+                print(f"  사진 정리 건너뜀: {e}")
         try:
             rows = store.list_drafts("queued")
             for row in rows:
