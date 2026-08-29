@@ -281,6 +281,27 @@ def _insert_text_safe(kb, text):
     time.sleep(0.05)
 
 
+def _text_present(frame, text) -> bool:
+    """본문 어딘가에 이 문장이 실제로 들어갔는지 확인(유실 검증용)."""
+    try:
+        return bool(frame.evaluate(
+            """(t) => [...document.querySelectorAll('.se-text-paragraph')]
+                 .some(p => (p.innerText||'').trim().includes(t))""", text.strip()))
+    except Exception:
+        return True   # 확인 못 하면 통과로 본다(거짓 경고 방지)
+
+
+def _ensure_focus(frame, log=None):
+    """스타일 툴바를 누른 뒤 반영될 시간만 준다. 캐럿은 절대 건드리지 않는다.
+
+    실측(2026-08-22): 스타일 적용 직후 '첫 줄'이 통째로 유실되는 일이 있어
+    editable.focus() 로 포커스를 되돌려봤는데, 그게 캐럿 위치를 잃게 만들어
+    본문 텍스트가 전부 날아갔다(저장본 확인: 텍스트 컴포넌트 0개, 표·사진만 남음).
+    포커스를 강제로 옮기는 복구는 하지 않는다.
+    """
+    time.sleep(0.3)
+
+
 def _type_lines(kb, text):
     lines = text.split("\n")
     for i, line in enumerate(lines):
@@ -349,12 +370,24 @@ def _probe_toolbar(frame, log, keyword=""):
         log(f"    (툴바 덤프 실패: {e})")
 
 
-def _insert_quote(frame, page, text, log, style="quotation_line"):
+def _insert_quote(frame, page, text, log, style="default", style_on=None):
     """네이버 인용구 컴포넌트를 삽입하고 text 를 채운다.
 
     NAEO 인용 조건(2026-08-15 진단): 서론 직후 '핵심 결론 선요약'을 인용구로 최소 1개.
     발행 경로가 NAEO 익스텐션이 아니라 이 워커라서, 마크다운 '>' 는 네이버에서 그냥
     꺾쇠 글자로 찍힌다 → 에디터 인용구 버튼을 직접 눌러야 실제 컴포넌트가 된다.
+
+    style 값은 에디터 툴바에서 실측한 것이다(2026-08-22):
+      default             인용구1 — 큰 따옴표가 위아래에 붙고 가운데 정렬(비비 글이 쓰는 것)
+      quotation_line      인용구2 — 왼쪽 세로줄 + '출처 입력' 칸이 있는 박스
+      quotation_bubble    인용구3 — 말풍선
+      quotation_underline 인용구4 — 밑줄
+      quotation_postit    인용구5 — 포스트잇
+      quotation_corner    인용구6 — 모서리
+    이전 기본값은 quotation_line 이었는데 박스형이라 비비 글 서식과 달랐다.
+
+    style_on: 인용구 컴포넌트가 열린 뒤 글자 서식을 입히는 콜백(회색 11pt).
+    컴포넌트만 넣으면 본문 크기(15)를 그대로 물려받아 글씨가 크게 들어간다.
 
     표와 같은 '샌드위치' 방식: 뒤에 남을 빈 문단을 먼저 만들고 그 위로 올라가 삽입한다.
     그래야 인용구 다음 본문이 인용구 안으로 새어 들어가지 않는다.
@@ -403,6 +436,9 @@ def _insert_quote(frame, page, text, log, style="quotation_line"):
         return False
 
     time.sleep(0.6)
+    if style_on:
+        style_on()      # 회색 11pt — 인용구 안 글씨가 본문 크기로 커지는 걸 막는다
+        time.sleep(0.2)
     _type_lines(kb, text)
     time.sleep(0.3)
     # 인용구 밖(아래 빈 문단)으로 커서 복귀 — 표 삽입과 동일하게 본문 끝을 다시 잡는다.
@@ -665,10 +701,26 @@ def _resize_for_upload(paths, log, max_side=1600, quality=85):
             out.append(str(p))
             continue
         try:
-            im = Image.open(p).convert("RGB")
+            im = Image.open(p)
+            # PNG 는 JPEG 로 바꾸지 않는다. 썸네일이 PNG(1080px)로 만들어지는데, JPEG 로
+            # 재인코딩하면 크롬 서브샘플링(4:2:0)이 크림 배경 위 녹색 글자 가장자리를
+            # 뭉갠다. 실측(2026-08-23) 제목 영역 PSNR: q85 34.0dB / 서브샘플링만 꺼도
+            # 36.6dB / q92+4:4:4 40.1dB. 원본 PNG 를 그대로 올리면 이 손실이 아예 없다.
+            if p.suffix.lower() == "" or p.suffix.lower() == ".png":
+                if max(im.size) <= max_side:
+                    out.append(str(p))
+                    continue
+                im = im.convert("RGB")
+                im.thumbnail((max_side, max_side))
+                dst = tmpdir / f"{i:02d}_{p.stem}.png"
+                im.save(dst, "PNG", optimize=True)
+                out.append(str(dst))
+                continue
+            im = im.convert("RGB")
             im.thumbnail((max_side, max_side))
             dst = tmpdir / f"{i:02d}_{p.stem}.jpg"
-            im.save(dst, "JPEG", quality=quality)
+            # 서브샘플링을 끄면 글자·로고가 든 사진의 가장자리가 덜 뭉개진다.
+            im.save(dst, "JPEG", quality=quality, subsampling=0)
             out.append(str(dst))
         except Exception as e:
             log(f"  리사이즈 실패({p.name}): {str(e)[:50]} → 원본 사용")
@@ -916,12 +968,30 @@ def _place_products(frame, page, products, log):
     return placed
 
 
+def _body_paragraphs(frame):
+    """본문 문단만 돌려준다(인트로 제외).
+
+    인트로(큰 제목 + 회색 요약)는 첫 구분선 '위'에 있다. 큰 제목이 소제목과 글자가
+    같으면(제품명을 둘 다 쓸 때가 그렇다) 소제목 스타일러가 문서 맨 위 큰 제목을 먼저
+    찾아 30px 를 19px 로 덮어썼다(2026-08-22 실측: '더트웰브 일회용 유아 치실 40개입').
+    그래서 첫 구분선 아래에서만 찾는다. 구분선을 못 찾으면 전체에서 찾는다(안전 폴백).
+    """
+    try:
+        scoped = frame.query_selector_all(
+            ".se-component.se-horizontalLine ~ .se-component .se-text-paragraph")
+        if scoped:
+            return scoped
+    except Exception:
+        pass
+    return frame.query_selector_all(".se-text-paragraph")
+
+
 def _para_text_styled(frame, text, min_px=17, min_weight=600):
     """본문에서 text 와 정확히 일치하는 문단을 찾아 실제 글자 크기/굵기를 읽어,
     본문(15px/400)보다 크거나 볼드면 True. (커서 기준이 아니라 텍스트로 문단을 찾으므로
     드롭다운 클릭으로 커서가 밀려도 정확히 검증된다.)"""
     try:
-        for el in frame.query_selector_all(".se-text-paragraph"):
+        for el in _body_paragraphs(frame):
             if (el.text_content() or "").strip() != text:
                 continue
             fs = el.evaluate(
@@ -944,7 +1014,7 @@ def _apply_sub_style(frame, page, sub_on, norm, log):
     kb = page.keyboard
     for attempt in range(3):
         handle = None
-        for el in frame.query_selector_all(".se-text-paragraph"):
+        for el in _body_paragraphs(frame):
             if (el.text_content() or "").strip() == norm:
                 handle = el
                 break
@@ -1026,24 +1096,28 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         _set_color(frame, None, log)
         _set_bold(frame, True, log)
         _ensure_strike_off(frame, log)
+        _ensure_focus(frame, log)
 
     def gray_on():
         _set_bold(frame, False, log)
         _set_text_style(frame, _GRAY_FONT, _GRAY_SIZE, log)
         _set_color(frame, _GRAY_COLOR, log)
         _ensure_strike_off(frame, log)
+        _ensure_focus(frame, log)
 
     def sub_on():
         _set_text_style(frame, _SUB_FONT, _SUB_SIZE, log)
         _set_color(frame, None, log)
         _set_bold(frame, True, log)
         _ensure_strike_off(frame, log)
+        _ensure_focus(frame, log)
 
     def body_on():
         _set_bold(frame, False, log)
         _set_color(frame, None, log)
         _set_text_style(frame, family, size, log)
         _ensure_strike_off(frame, log)
+        _ensure_focus(frame, log)
 
     # 인사말 기준 분리
     lines = body.split("\n")
@@ -1109,6 +1183,12 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     if summary_lines:
         gray_on(); _type_lines(kb, "\n".join(summary_lines)); kb.press("Enter")
         log("메타 요약(회색) 적용.")
+
+    # 유실 검증 — 스타일 적용 직후 첫 줄이 통째로 사라지던 문제가 있었다(_ensure_focus 참고).
+    # 조용히 넘어가면 큰 제목이 빈 채로 저장된다. 남으면 로그로 바로 보이게 한다.
+    for _label, _want in (("큰 제목", title_lines), ("회색 요약", summary_lines)):
+        if _want and not _text_present(frame, _want[0]):
+            log(f"  ⚠ {_label} 첫 줄이 본문에 안 들어갔습니다: {_want[0][:26]}")
     # 구분선
     body_on()
     _insert_divider(frame, log, "line6")
@@ -1143,7 +1223,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             quote = "\n".join(l.strip() for l in mq.group(1).strip().split("\n") if l.strip())
             if quote:
                 try:
-                    ok = _insert_quote(frame, page, quote, log)
+                    ok = _insert_quote(frame, page, quote, log, style_on=gray_on)
                 except Exception as e:
                     log(f"  인용구 삽입 실패({str(e)[:50]}) → 본문 텍스트로 대체")
                     _focus_body_end(frame, log)

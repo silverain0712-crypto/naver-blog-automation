@@ -258,7 +258,13 @@ def handle_shot_requests() -> None:
         print(f"\n{stamp} 🖼  상품 사진 요청: {row['id'][:8]}"
               f"{' (재생성 #' + str(target) + ')' if target is not None else ''}")
 
-        _finish_shot_job(row, {"image_job": {**job, "status": "running"}})
+        # running 표시를 row 사본에도 반영해야 한다. 아래 단계들이 row["data"] 를 기준으로
+        # 다시 update_draft 를 부르는데, 사본이 옛날 값이면 status 가 requested 로 되돌아가
+        # 다음 폴링에서 같은 잡을 또 처리한다(사진이 두 번 생성된다).
+        job = {**job, "status": "running"}
+        data = {**data, "image_job": job}
+        row["data"] = data
+        _finish_shot_job(row, {"image_job": job})
         try:
             if not product_shots.enabled():
                 raise RuntimeError("GEMINI_API_KEY 가 없습니다(.env 확인).")

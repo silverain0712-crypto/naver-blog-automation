@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 import config
+from modules import naeo_audit
 from modules.image_analyzer import analysis_summary_for_writer
 from modules.llm import call_json
 from modules.style_profiler import profile_to_prompt
@@ -355,10 +356,12 @@ def generate_post(
         "장소는 위치·운영시간·주차·요금·가는법 5요소를 반드시 구체적으로 담아라.\n"
         "- 비교·스펙·요금/시간·준비물처럼 표로 보면 명확한 정보는 적극적으로 표로 만들어라(표는 강력한 "
         "상위노출 신호다). 특히 제품 스펙/비교, 장소 운영시간·요금은 표로 정리하라.\n"
-        "- 소제목은 4~8개를 번호형(1. 2.) 또는 질문형('언제부터 써야 할까?')으로 쓰고, "
-        "각 소제목이 하나의 정보 덩어리(스펙/단계/로컬정보 하나)를 담게 하라.\n"
-        "- 본문 글자수는 공백 제외 최소 1,500자, 정보성·비교·장소 글은 2,000자 이상을 권장한다 "
-        "(상위노출 정보글 평균이 그 이상). 단 의미 없는 늘리기·같은 말 반복은 금지.\n"
+        "- 소제목은 3~6개. 번호형(1. 2.) 또는 질문형('언제부터 써야 할까?')으로 쓰고, "
+        "각 소제목이 하나의 정보 덩어리(스펙/단계/로컬정보 하나)를 담게 하라. "
+        "7개 이상으로 잘게 쪼개지 마라 — AI 인용 상위 글은 3~6개 구간에 몰려 있다.\n"
+        "- 본문 글자수는 아래 [목표 글 길이]를 하한으로 지키되, 공백 제외 2,200자를 크게 넘기지 마라. "
+        "NAEO 실측 처방 밴드는 1,300~1,700자이고, 그 위로 부풀린 글은 인용에서 오히려 밀린다. "
+        "의미 없는 늘리기·같은 말 반복은 금지.\n"
         "- 연관 검색어(관련 키워드)를 본문 전체에 20개 이상 자연스럽게 녹여라(맥락 없는 나열·키워드 스터핑 금지).\n"
         "- 같은 키워드를 20회 이상 반복하지 마라(과최적화는 오히려 감점). 동의어·연관어로 변주하라.\n\n"
         + link_rule
@@ -369,8 +372,9 @@ def generate_post(
         "'세부 수식어 + 핵심어' 롱테일 조합을 우선 제안하라(브랜드·모델명, 용량/형태, 개월수, 연도, "
         "'후기·비교·총정리' 같은 정보형 어미). 경쟁 낮고 검색의도 뚜렷한 조합이 상위노출에 유리하다.\n"
         "- title_candidates: 서로 다른 각도의 제목 3개. 네이버 SEO 최적화 — 핵심 키워드를 "
-        "앞쪽에 배치하고, 검색 의도(지역·제품·후기 등)를 담아 자연스럽게. 28~35자 권장, "
-        "낚시성·과장 금지.\n"
+        "앞쪽에 배치하고, 검색 의도(지역·제품·후기 등)를 담아 자연스럽게. 33자 내외(28~35자), "
+        "낚시성·과장 금지. **3개 모두 구체적인 숫자를 하나씩 품어야 한다**(가격·월령·개수·소요시간·"
+        "연도 중 본문에 실제로 있는 수치에서). 숫자가 없는 제목은 후보로 내지 마라.\n"
         "- hashtags: 글 주제와 관련되고 네이버 SEO 를 고려한 해시태그. 기호(#) 없이 단어만, 핵심 키워드 "
         "+ 연관 검색어 조합으로. 기본은 10개, 단 협찬 가이드라인에 '필수 해시태그' 목록이 있으면 그 목록을 "
         "그대로(개수 제한 없이) 우선해 넣어라. 서로 중복되거나 너무 일반적이지 않게.\n"
@@ -393,6 +397,15 @@ def generate_post(
         "가능하면 글당 1~2개 넣어라(표는 상위노출 신호). 단 억지 표는 금지, "
         "표 안에는 [사진N]을 넣지 마라. 예:\n"
         "[표]\n구분 | 내용 | 비고\n수하물표 | 짐 추적에 필요 | 사진 보관\n신고 시점 | 입국장 나가기 전 | 필수\n[/표]\n"
+        "- 인용구: 반드시 \"안녕하세요, 비비입니다 :)\" 인사말 **뒤**, 첫 소제목 **앞**의 "
+        "도입부 안에 [인용]과 [/인용] 사이로 넣어라. 글 맨 위(큰 제목·회색 요약 블록)에는 "
+        "절대 넣지 마라 — 그 자리는 제목 영역이라 인용구가 제목 글자로 찍힌다. "
+        "내용은 이 글의 핵심 결론을 "
+        "먼저 밝히는 1~2문장을 넣어라(글당 1개 필수, 최대 2개). 발행 도구가 네이버 인용구 "
+        "블록으로 실제 삽입한다. 가능하면 수치를 포함하고, 본문 문장을 그대로 옮기지 말고 "
+        "결론을 새로 압축해서 써라. 마크다운 '>' 는 쓰지 마라(네이버에서 꺾쇠 글자로 찍힌다). 예:\n"
+        "[인용]119,000원짜리 이케아 둑티그는 조립에 1시간 30분 걸렸지만, 16개월 뽀식이가 "
+        "매일 아침 먼저 달려가는 장난감이 됐어요.[/인용]\n"
         "- photo_placement / video_placement: 각 사진·영상의 섹션과 캡션/설명.\n"
         "- confirm_needed: 사진/메모로 확정할 수 없어 사용자 검수가 필요한 항목"
         "(가격, 위치, 주차, 협찬 문구, 링크 등). 없으면 빈 배열."
@@ -439,5 +452,52 @@ def generate_post(
         expanded = _expand_body(system, post.get("body", ""), length, actual)
         if _content_len(expanded) > actual:
             post["body"] = expanded
+
+    # NAEO 인용 조건 검수 — 프롬프트로 시킨 걸 실제로 세어보고, 미달이면 1회 보정한다.
+    # (숫자 문장 비율·표·소제목 수·제목 숫자. 자세한 근거는 prompts/naeo_rules.py 참고)
+    if config.ENABLE_NAEO_AUDIT:
+        result = naeo_audit.audit(post, length=length)
+        # 보정에서 빼는 것 두 가지.
+        #  · 분량 미달 — 위에서 이미 한 번 늘려봤다(같은 일 반복 방지).
+        #  · 소제목 개수 — densify 프롬프트는 '소제목 문구를 그대로 유지하라'인데 이 지적은
+        #    '합쳐라'라서 서로 모순이다. 모델이 합치면 본문만 바뀌고 subheadings 메타는
+        #    그대로 남아, 워커가 소제목을 못 찾아 스타일을 못 입힌다(실측: 2/8개 적용).
+        fixable = [i for i in result["issues"]
+                   if not i.startswith("분량 ") and not i.startswith("소제목 ")]
+        if fixable:
+            print(f"  (보정 전) {naeo_audit.format_issues(result)}")
+            sources = "\n\n".join(
+                s for s in (
+                    f"[사용자 메모]\n{memo.strip()}" if memo.strip() else "",
+                    f"[추가 입력]\n{_format_optional(optional_fields)}",
+                    f"[웹 리서치로 확인한 사실]\n{research_notes}" if research_notes else "",
+                    f"[협찬 가이드/제품 설명서]\n{guideline[:2000]}" if guideline else "",
+                    f"[사진 분석]\n{photo_summary}",
+                ) if s
+            )
+            fixed = naeo_audit.densify(
+                system=system,
+                body=post.get("body", ""),
+                issues=fixable,
+                sources=sources,
+                need_table=not result["has_table"],
+                need_numbers=result["numeric_ratio"] < result["numeric_target"],
+                need_quote=not result["has_quote"],
+            )
+            # 보정본이 분량을 깎아먹었으면(요약해버린 경우) 원문을 지킨다.
+            if fixed != post.get("body", "") and _content_len(fixed) >= result["content_len"] * 0.9:
+                post["body"] = fixed
+            result = naeo_audit.audit(post, length=length)
+        print(f"  {naeo_audit.format_issues(result)}")
+        post["naeo_audit"] = result
+
+    # 안전망: 본문에 실제로 없는 소제목은 메타에서 뺀다. 남겨두면 워커가 없는 문단을
+    # 찾아다니다 '일부 미적용'으로 끝난다(스타일이 안 입은 소제목이 본문 글씨로 남는다).
+    _body = post.get("body", "") or ""
+    _subs = [s for s in (post.get("subheadings") or []) if str(s).strip()]
+    _alive = [s for s in _subs if str(s).strip() in _body]
+    if len(_alive) != len(_subs):
+        print(f"  소제목 메타 정리: {len(_subs)}개 → {len(_alive)}개 (본문에 없는 것 제거)")
+        post["subheadings"] = _alive
 
     return post
