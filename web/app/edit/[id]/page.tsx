@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   STATUS_LABEL,
   POST_TYPES,
-  SPONSOR_TYPES,
   POST_LENGTHS,
   PHOTO_STYLES,
 } from "@/lib/constants";
@@ -138,9 +137,8 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     const prev = (draft?.data?.request ?? {}) as Record<string, unknown>;
     const nextReq = {
       ...prev,
-      structure_key: str("structure_key") || (prev.structure_key as string) || "free",
+      structure_key: str("structure_key") || (prev.structure_key as string) || "restaurant",
       keyword: str("keyword"),
-      sponsor_type: str("sponsor_type") || (prev.sponsor_type as string) || "내돈내산",
       length: parseInt(str("length") || String(prev.length ?? 1500), 10) || 1500,
       photo_style: str("photo_style") || (prev.photo_style as string) || "감성 중심",
       memo: str("memo"),
@@ -305,25 +303,11 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
               <select
                 name="structure_key"
                 className={fieldC}
-                defaultValue={r.structure_key || "free"}
+                defaultValue={r.structure_key || "restaurant"}
               >
                 {POST_TYPES.map((t) => (
                   <option key={t.key} value={t.key}>
                     {t.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className={labelC}>협찬</span>
-              <select
-                name="sponsor_type"
-                className={fieldC}
-                defaultValue={r.sponsor_type || "내돈내산"}
-              >
-                {SPONSOR_TYPES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
                   </option>
                 ))}
               </select>

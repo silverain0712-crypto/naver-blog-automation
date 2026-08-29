@@ -1,4 +1,4 @@
-"""환경 설정과 상수. .env 에서 API 키를 읽고, 모델 ID와 글 유형/협찬 옵션을 정의한다."""
+"""환경 설정과 상수. .env 에서 API 키를 읽고, 모델 ID와 글 유형 옵션을 정의한다."""
 
 import os
 from pathlib import Path
@@ -82,22 +82,14 @@ OUTPUT_DIR = BASE_DIR / "output"
 STYLE_PROFILE_CACHE = STYLE_SAMPLES_DIR / "_profile.json"
 
 # --- 입력 옵션 ------------------------------------------------------------
-# 글 유형 (key: post_structures 의 구조 키와 일치)
+# 글 유형 (key: post_structures 의 구조 키와 일치). 협찬 여부 축은 폐지 — 글 유형 하나로만 구분한다.
 POST_TYPES = {
-    "제품 후기": "product",
-    "아기랑 방문 후기": "baby_visit",
-    "맛집/카페 후기": "restaurant",
-    "정보성 육아 글": "parenting_info",
-    "자유 후기": "free",
+    "맛집/카페 방문 후기": "restaurant",
+    "정보성 포스팅": "info",
+    "홈피드형(트렌드·이슈)": "hompiid",
+    "여행 후기": "travel",
+    "제품 리뷰": "product",
 }
-
-# 협찬 여부
-SPONSOR_TYPES = [
-    "내돈내산",
-    "제품제공",
-    "원고료 제공",
-    "네이버 쇼핑 커넥트 포함",
-]
 
 # 글 길이(자)
 POST_LENGTHS = [1500, 2000, 2500]

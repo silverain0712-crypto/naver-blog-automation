@@ -99,12 +99,8 @@ video_desc = st.text_input(
     "영상 한 줄 설명 (선택)", placeholder="예: 뽀식이가 놀이공간에서 노는 모습"
 )
 
-st.subheader("2. 글 유형 · 협찬")
-c1, c2 = st.columns(2)
-with c1:
-    post_type_label = st.selectbox("글 유형", list(config.POST_TYPES.keys()))
-with c2:
-    sponsor_type = st.radio("협찬 여부", config.SPONSOR_TYPES, horizontal=False)
+st.subheader("2. 글 유형")
+post_type_label = st.selectbox("글 유형", list(config.POST_TYPES.keys()))
 
 st.subheader("3. 키워드 · 링크 (모두 선택)")
 keyword = st.text_input(
@@ -207,7 +203,6 @@ if go:
                 keyword=keyword,
                 product_link=product_link,
                 required_links=required_links,
-                sponsor_type=sponsor_type,
                 memo=memo,
                 length=length,
                 photo_style=photo_style,

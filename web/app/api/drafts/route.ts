@@ -31,11 +31,10 @@ export async function POST(req: NextRequest) {
     }
 
     const request = {
-      structure_key: str("structure_key") || "free",
+      structure_key: str("structure_key") || "restaurant",
       keyword: str("keyword"),
       product_link: str("product_link"),
       required_links,
-      sponsor_type: str("sponsor_type") || "내돈내산",
       memo: str("memo"),
       length: parseInt(String(b.length ?? "1500"), 10) || 1500,
       photo_style: str("photo_style") || "감성 중심",

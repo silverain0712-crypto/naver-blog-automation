@@ -90,11 +90,7 @@ with tab_new:
     if uploaded:
         st.image([f.getvalue() for f in uploaded], width=90)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        post_type_label = st.selectbox("글 유형", list(config.POST_TYPES.keys()))
-    with c2:
-        sponsor = st.radio("협찬", config.SPONSOR_TYPES)
+    post_type_label = st.selectbox("글 유형", list(config.POST_TYPES.keys()))
 
     keyword = st.text_input("핵심 키워드 (비우면 AI 제안)")
     product_link = st.text_input("상품 링크 (선택)")
@@ -122,7 +118,6 @@ with tab_new:
             _keyword      = (_p["keyword"]       if _p else keyword)
             _product_link = (_p["product_link"]  if _p else product_link)
             _req_links    = (_p["req_links"]      if _p else [l.strip() for l in required_links_raw.splitlines() if l.strip()])
-            _sponsor      = (_p["sponsor"]        if _p else sponsor)
             _memo         = (_p["memo"]           if _p else memo)
             _blog_id      = (_p["blog_id"]        if _p else blog_id)
             _font         = (_p["body_font"]      if _p else body_font)
@@ -137,7 +132,7 @@ with tab_new:
             _memo_clean = clean_generation_request(_memo) if _use_dalle else _memo
             st.session_state["draft_params"] = dict(
                 images=images, structure_key=_structure_key, keyword=_keyword,
-                product_link=_product_link, req_links=_req_links, sponsor=_sponsor,
+                product_link=_product_link, req_links=_req_links,
                 memo=_memo_clean, blog_id=_blog_id, body_font=_font, body_size=_size,
             )
             # 무거운 모듈(anthropic/PIL)은 여기서만 로드 → 첫 화면 로딩 가볍게.
@@ -163,7 +158,7 @@ with tab_new:
                     post = post_generator.generate_post(
                         structure_key=_structure_key, keyword=_keyword,
                         product_link=_product_link, required_links=_req_links,
-                        sponsor_type=_sponsor, memo=_memo_clean, length=1500,
+                        memo=_memo_clean, length=1500,
                         photo_style="감성 중심", optional_fields={},
                         style_guide=guide, image_analysis=analysis,
                     )

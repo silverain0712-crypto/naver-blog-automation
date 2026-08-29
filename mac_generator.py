@@ -82,7 +82,7 @@ def _collect_guideline(req: dict) -> str:
 def generate(row: dict) -> None:
     data0 = row.get("data") or {}
     req = data0.get("request") or {}
-    structure_key = req.get("structure_key", "free")
+    structure_key = req.get("structure_key", "info")
     photo_style = req.get("photo_style", config.PHOTO_STYLES[0])
 
     # 수정 재생성: 폰에서 '수정 요청'을 넣으면 data.revision_request 에 담겨 온다.
@@ -141,7 +141,6 @@ def generate(row: dict) -> None:
         keyword=req.get("keyword", ""),
         product_link=req.get("product_link", ""),
         required_links=req.get("required_links", []),
-        sponsor_type=req.get("sponsor_type", "내돈내산"),
         memo=req.get("memo", ""),
         length=int(req.get("length", 1500)),
         photo_style=photo_style,

@@ -16,7 +16,7 @@ from modules.image_analyzer import analysis_summary_for_writer
 from modules.llm import call_json
 from modules.style_profiler import profile_to_prompt
 from prompts.post_structures import get_structure
-from prompts.style_rules import STYLE_RULES, sponsor_instruction
+from prompts.style_rules import STYLE_RULES
 from prompts.edit_lessons import EDIT_LESSONS
 from prompts.geo_structure import GEO_STRUCTURE
 from prompts.naeo_rules import NAEO_RULES
@@ -174,7 +174,6 @@ def generate_post(
     keyword: str = "",
     product_link: str = "",
     required_links: list[str] | None = None,
-    sponsor_type: str,
     memo: str,
     length: int,
     photo_style: str,
@@ -332,7 +331,7 @@ def generate_post(
         + "\n\n"
         + profile_to_prompt(style_guide)
         + "\n\n"
-        + sponsor_instruction(sponsor_type)
+        + structure.get("top_expo_rules", "")
         + "\n\n"
         + brand_rule
         + guideline_rule

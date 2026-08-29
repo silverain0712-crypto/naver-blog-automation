@@ -1,18 +1,12 @@
-// config.py 의 입력 옵션을 그대로 미러링 (POST_TYPES / SPONSOR_TYPES / POST_LENGTHS / PHOTO_STYLES)
+// config.py 의 입력 옵션을 그대로 미러링 (POST_TYPES / POST_LENGTHS / PHOTO_STYLES)
+// 협찬 여부 축은 폐지 — 글 유형 하나로만 구분한다(협찬 고지가 필요하면 메모에 직접 적는다).
 
 export const POST_TYPES: { label: string; key: string }[] = [
-  { label: "제품 후기", key: "product" },
-  { label: "아기랑 방문 후기", key: "baby_visit" },
-  { label: "맛집/카페 후기", key: "restaurant" },
-  { label: "정보성 육아 글", key: "parenting_info" },
-  { label: "자유 후기", key: "free" },
-];
-
-export const SPONSOR_TYPES = [
-  "내돈내산",
-  "제품제공",
-  "원고료 제공",
-  "네이버 쇼핑 커넥트 포함",
+  { label: "맛집/카페 방문 후기", key: "restaurant" },
+  { label: "정보성 포스팅", key: "info" },
+  { label: "홈피드형(트렌드·이슈)", key: "hompiid" },
+  { label: "여행 후기", key: "travel" },
+  { label: "제품 리뷰", key: "product" },
 ];
 
 export const POST_LENGTHS = [1500, 2000, 2500];

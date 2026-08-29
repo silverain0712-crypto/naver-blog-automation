@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   POST_TYPES,
-  SPONSOR_TYPES,
   POST_LENGTHS,
   PHOTO_STYLES,
   OPTIONAL_FIELDS,
@@ -206,7 +205,6 @@ export default function NewPostPage() {
         keyword: str("keyword"),
         product_link: str("product_link"),
         required_links: str("required_links"),
-        sponsor_type: str("sponsor_type"),
         memo: str("memo"),
         length: str("length"),
         photo_style: str("photo_style"),
@@ -356,20 +354,10 @@ export default function NewPostPage() {
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
             <span className={labelC}>글 유형</span>
-            <select name="structure_key" className={field} defaultValue="free">
+            <select name="structure_key" className={field} defaultValue="restaurant">
               {POST_TYPES.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className={labelC}>협찬</span>
-            <select name="sponsor_type" className={field} defaultValue="내돈내산">
-              {SPONSOR_TYPES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
                 </option>
               ))}
             </select>
