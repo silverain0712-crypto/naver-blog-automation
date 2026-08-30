@@ -24,13 +24,16 @@ CREAM = (238, 233, 227)
 
 _BG_NEGATIVE_PROMPT = (
     "text, letters, numbers, typography, words, signage, labels, logos, watermark, "
-    "writing, captions"
+    "writing, captions, calendar, calendar grid, schedule, chart, graph, table, "
+    "spreadsheet, clock face, numbered grid"
 )
 # 실측(2026-08-30): 프롬프트 문장에 "no text" 를 덧붙이기만 하면 무시하고 가짜 글자를
 # 그려 넣는다 — negative_prompt 파라미터로 따로 줘야 실제로 먹힌다. 그리고 프레임 액자·
-# 제품 라벨·디지털 디스플레이처럼 '원래 글자가 있는 사물'이 장면에 있으면 negative_prompt를
-# 줘도 자꾸 깨진 글자를 그려 넣는다 — bg_prompt 를 쓸 때 그런 사물은 아예 피하고, 질감·
-# 손·식물·빛처럼 글자가 없는 소재로 장면을 짜야 안정적으로 나온다.
+# 제품 라벨·디지털 디스플레이·달력/스케줄표처럼 '원래 글자·숫자가 있는 사물'이 장면에
+# 있으면 negative_prompt를 줘도 자꾸 깨진 숫자·글자를 그려 넣는다(실측: "적용 시점" 카드에
+# 달력/표 이미지를 시켰더니 negative_prompt를 줬는데도 가짜 숫자 그리드가 나왔다) —
+# bg_prompt 를 쓸 때 그런 사물은 아예 피하고, 질감·손·식물·빛처럼 글자가 없는 소재로
+# 장면을 짜야 안정적으로 나온다.
 
 _FONTS_DIR = config.BASE_DIR / "fonts"
 _FALLBACK_FONTS = [
@@ -116,6 +119,20 @@ def _ink_text(draw, xy, text, fnt, fill, anchor="mm", stroke_width=0, stroke_fil
     draw.text(xy, text, font=fnt, fill=fill, anchor=anchor, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
 
+_MAX_TEXT_W = SIZE_W - 120  # 좌우 60px 여백 — 이보다 넓으면 잘려 보인다.
+
+
+def _fit_font(draw, text: str, base_size: int, prefer: str | None, min_size: int = 32) -> ImageFont.FreeTypeFont:
+    """긴 줄(특히 숫자 많은 정보성 문장)이 카드 밖으로 잘리지 않게 폭에 맞춰 글자 크기를 줄인다."""
+    size = base_size
+    while size > min_size:
+        f = _font(size, prefer)
+        if draw.textlength(text, font=f) <= _MAX_TEXT_W:
+            return f
+        size -= 4
+    return _font(min_size, prefer)
+
+
 def _generate_background(prompt: str) -> bytes:
     if not enabled():
         raise CardImageError("HF_API_KEY/HF_API_SECRET 가 없습니다(.env 확인).")
@@ -152,12 +169,13 @@ def _compose(bg_bytes: bytes, spec: CardSpec) -> bytes:
     y = SIZE_H - 96
 
     if has_caption:
-        f_cap = _font(30)
-        _ink_text(draw, (SIZE_W // 2, y), spec.caption.strip(), f_cap, (230, 230, 224, 255), anchor="mm")
+        cap = spec.caption.strip()
+        f_cap = _fit_font(draw, cap, 30, None, min_size=20)
+        _ink_text(draw, (SIZE_W // 2, y), cap, f_cap, (230, 230, 224, 255), anchor="mm")
         y -= 56
 
-    f_line = _font(66, "title")
     for line in reversed(lines):
+        f_line = _fit_font(draw, line, 66, "title")
         _ink_text(draw, (SIZE_W // 2 + 2, y + 2), line, f_line, (0, 0, 0, 90), anchor="mm")
         _ink_text(draw, (SIZE_W // 2, y), line, f_line, (255, 255, 255, 255), anchor="mm")
         y -= 84
