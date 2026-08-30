@@ -31,6 +31,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const [loadErr, setLoadErr] = useState("");
   const [stashUrls, setStashUrls] = useState<string[]>([]); // 보관 사진 미리보기 URL
   const [revisionReq, setRevisionReq] = useState(""); // 초안 확인 후 수정 요청
+  const [regenMemo, setRegenMemo] = useState(""); // 처음부터 다시쓰기용 메모
   const editedRef = useRef(false); // 사용자가 편집을 시작하면 폴링이 덮어쓰지 않게
   const stashFormRef = useRef<HTMLFormElement>(null);
 
@@ -45,6 +46,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
     if (!editedRef.current) {
       setTitle(draft.title ?? "");
       setBody(draft.body ?? "");
+      setRegenMemo((draft.data?.request as { memo?: string } | undefined)?.memo ?? "");
     }
     return draft as Draft;
   }, [id]);
@@ -128,6 +130,51 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       editedRef.current = false;
       load(); // status 가 generating 으로 바뀌면 폴링 useEffect 가 다시 돌아 완성본을 보여줌
     }
+  }
+
+  // 처음부터 다시쓰기 — 지금 제목·본문은 버리고, 메모를 기준으로 리서치·벤치마킹부터
+  // 새로 해서 완전히 새 글을 쓴다('수정 요청'과 달리 기존 초안을 베이스로 삼지 않는다).
+  async function regenerateAll() {
+    const memo = regenMemo.trim();
+    if (!memo) return;
+    setSaving(true);
+    const prevData = (draft?.data ?? {}) as Record<string, unknown>;
+    const prevReq = (prevData.request ?? {}) as Record<string, unknown>;
+    const nextData: Record<string, unknown> = { ...prevData, request: { ...prevReq, memo } };
+    delete nextData.revision_request;
+    const res = await fetch(`/api/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: nextData, status: "generating" }),
+    });
+    setSaving(false);
+    if (res.ok) {
+      editedRef.current = false;
+      load();
+    }
+  }
+
+  // 상품 링크를 다시 넣어 저장 — 예전 링크로 받아둔 레퍼런스/상세컷/작업상태는 더 이상
+  // 못 믿으므로 같이 비운다(ProductShots 가 이 링크로 상세컷을 다시 만들 수 있게).
+  async function saveProductLink(link: string) {
+    const prevData = (draft?.data ?? {}) as Record<string, unknown>;
+    const prevReq = (prevData.request ?? {}) as Record<string, unknown>;
+    const nextData: Record<string, unknown> = {
+      ...prevData,
+      request: { ...prevReq, product_link: link },
+    };
+    delete nextData.product_ref;
+    delete nextData.product_shots;
+    delete nextData.image_job;
+    const res = await fetch(`/api/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: nextData }),
+    });
+    if (res.ok) {
+      setDraft((prev) => (prev ? { ...prev, data: nextData } : prev));
+    }
+    return res.ok;
   }
 
   // 보관해둔 사진으로 초안 생성 시작 — 폼 값을 request 에 합쳐 status='generating' 전환.
@@ -501,11 +548,10 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
 
       <ProductShots
         id={id}
-        hasLink={Boolean(
-          String(
-            (draft.data?.request as { product_link?: unknown } | undefined)?.product_link ?? "",
-          ).trim(),
+        productLink={String(
+          (draft.data?.request as { product_link?: unknown } | undefined)?.product_link ?? "",
         )}
+        onSaveLink={saveProductLink}
       />
 
       <div className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
@@ -526,6 +572,27 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
           className="mt-2 w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
         >
           {saving ? "요청 보내는 중…" : "🔄 수정 요청해서 다시 쓰기"}
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3">
+        <p className="mb-1 text-sm font-medium text-orange-800">🔁 처음부터 다시쓰기</p>
+        <p className="mb-2 text-xs text-orange-700">
+          지금 제목·본문은 버리고, 아래 메모를 바탕으로 리서치·벤치마킹부터 새로 해서 완전히
+          새 글을 써요. 상품 링크를 바꿨거나 글 방향 자체가 틀렸을 때 써주세요.
+        </p>
+        <textarea
+          value={regenMemo}
+          onChange={(e) => setRegenMemo(e.target.value)}
+          placeholder="새로 쓸 글의 메모를 적어주세요."
+          className="min-h-28 w-full rounded-lg border border-orange-300 bg-white px-3 py-2 text-base"
+        />
+        <button
+          onClick={regenerateAll}
+          disabled={saving || !regenMemo.trim()}
+          className="mt-2 w-full rounded-lg bg-orange-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {saving ? "시작하는 중…" : "🔁 처음부터 다시 쓰기"}
         </button>
       </div>
 

@@ -8,13 +8,44 @@ type Job = { status?: string; error?: string; target?: number } | null;
 
 const BUSY = ["requested", "running"];
 
-export default function ProductShots({ id, hasLink }: { id: string; hasLink: boolean }) {
+type Props = {
+  id: string;
+  productLink: string;
+  onSaveLink: (link: string) => Promise<boolean>;
+};
+
+export default function ProductShots({ id, productLink, onSaveLink }: Props) {
   const [shots, setShots] = useState<Shot[]>([]);
   const [job, setJob] = useState<Job>(null);
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(false);
+  const [linkInput, setLinkInput] = useState(productLink);
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [linkMsg, setLinkMsg] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // 부모가 저장한 새 링크로 동기화(다른 곳에서 갱신됐을 때도 입력칸이 따라간다).
+  useEffect(() => {
+    setLinkInput(productLink);
+  }, [productLink]);
+
+  async function saveLink() {
+    const next = linkInput.trim();
+    if (!next || next === productLink.trim()) return;
+    setLinkSaving(true);
+    setLinkMsg("");
+    const ok = await onSaveLink(next);
+    setLinkSaving(false);
+    if (ok) {
+      // 링크가 바뀌면 예전 사진은 더 이상 이 링크의 상품이 아니다 — 화면에서도 비운다.
+      setShots([]);
+      setJob(null);
+      setLinkMsg("✅ 링크를 저장했어요. 이제 새 링크로 상세컷을 만들 수 있어요.");
+    } else {
+      setLinkMsg("저장 실패. 다시 시도해주세요.");
+    }
+  }
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/drafts/${id}/shots`, { cache: "no-store" });
@@ -58,6 +89,7 @@ export default function ProductShots({ id, hasLink }: { id: string; hasLink: boo
 
   const busy = BUSY.includes(job?.status ?? "");
   const hasShots = shots.length > 0;
+  const hasLink = Boolean(productLink.trim());
 
   return (
     <section className="mt-4 rounded-lg border border-neutral-200 bg-white">
@@ -76,10 +108,32 @@ export default function ProductShots({ id, hasLink }: { id: string; hasLink: boo
 
       {open && (
         <div className="border-t border-neutral-100 px-3 py-3">
+          <p className="mb-1 text-xs font-medium text-neutral-600">상품 링크</p>
+          <p className="mb-2 text-xs text-neutral-400">
+            링크가 죽었거나(삭제·품절) 다른 상품으로 바꾸고 싶으면 여기서 다시 넣고 저장하세요.
+          </p>
+          <div className="mb-2 flex gap-2">
+            <input
+              value={linkInput}
+              onChange={(e) => setLinkInput(e.target.value)}
+              placeholder="https://..."
+              className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={saveLink}
+              disabled={linkSaving || !linkInput.trim() || linkInput.trim() === productLink.trim()}
+              className="shrink-0 rounded-lg border border-neutral-300 px-3 py-2 text-xs font-medium disabled:opacity-40"
+            >
+              {linkSaving ? "저장 중…" : "저장"}
+            </button>
+          </div>
+          {linkMsg && <p className="mb-2 text-xs text-neutral-600">{linkMsg}</p>}
+
           {!hasLink ? (
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              글감에 상품 링크가 없어서 만들 수 없어요. 링크를 넣으면 실제 상품 사진을 가져와
-              그 제품 그대로 상세컷을 만듭니다.
+              아직 상품 링크가 없어서 만들 수 없어요. 위에 링크를 넣고 저장하면, 실제 상품 사진을
+              가져와 그 제품 그대로 상세컷을 만듭니다.
             </p>
           ) : (
             <>
