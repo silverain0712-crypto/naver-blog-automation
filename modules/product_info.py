@@ -22,9 +22,12 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 _TIMEOUT = 30000
 
-# 상품 사진 호스트. 로고·아이콘과 섞이지 않게 화면에 크게 그려진 것만 골라낸다.
-_IMG_HOSTS = ("pstatic.net", "phinf", "naver.net")
+# 로고·아이콘과 섞이지 않게 화면에 크게 그려진 것만 골라낸다.
 _MIN_EDGE = 180
+# 상품 갤러리 컨테이너에서 흔히 쓰는 클래스/속성 이름(카페24 xans-product-image 등).
+# alt·class 텍스트에 이 패턴이 걸리면 '진짜 상품 사진'일 확률이 높다고 보고 가점한다.
+_PRODUCT_HINT_RE = re.compile(r"product|prd|goods|item[-_]?img|detail[-_]?img|gallery", re.I)
+_HINT_BONUS = 5000
 
 
 @dataclass
@@ -55,44 +58,62 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
 
 
-def _pick_images(page) -> list[str]:
-    """상품 사진 URL 을 대표컷부터 돌려준다.
+def _pick_images(page) -> list[dict]:
+    """상품 사진 후보를 점수순으로 돌려준다. 각 항목은 {"src", "alt"}.
 
-    og:image 가 대표컷이다. 나머지는 DOM 순서를 따른다 — 갤러리가 상세페이지보다
-    먼저 그려지므로, 면적순으로 정렬하면 오히려 상세페이지 배너가 앞으로 온다.
+    실측(2026-08-30): og:image 를 무조건 대표컷으로 믿었더니, 일반 쇼핑몰(카페24 등)에서는
+    og:image 가 브랜드 로고/공유용 배너인 경우가 흔했다(예: mongdies.com, Noble Farms).
+    그 로고를 레퍼런스로 넘기면 Gemini 가 진짜 제품이 아니라 그럴싸한 다른 물건을
+    지어낸다 — 세정제 정제를 유리병 오일로 만드는 식. 진짜 상품 사진은 화면에 버젓이
+    있었지만 `_IMG_HOSTS`(네이버 CDN 전용) 필터에 걸려 후보에서 빠졌었다.
+
+    그래서 호스트 제한을 없애고, 대신 (1) 표시 크기 (2) 정사각~4:5 범위의 종횡비
+    (배너·상세페이지 스토리 이미지는 대개 2:1 이상으로 길쭉하다) (3) 컨테이너 class/alt 에
+    'product/prd/goods' 류 힌트가 있으면 가점, 으로 점수를 매겨 정렬한다. og:image 는
+    후보 목록에는 넣되 다른 신호가 없을 때만 쓰이도록 낮은 기본 점수만 준다.
     """
     raw = page.evaluate(
         """() => Array.from(document.images).map(img => ({
              src: img.currentSrc || img.src,
              w: img.naturalWidth, h: img.naturalHeight,
              dw: img.width, dh: img.height,
+             alt: img.alt || '',
+             cls: img.className || '',
+             parentCls: img.parentElement ? (img.parentElement.className || '') : '',
            }))"""
     )
-    out: list[str] = []
-    seen: set[str] = set()
 
-    def add(src: str) -> None:
+    def norm(src: str) -> str | None:
         if not src or not src.startswith("http"):
-            return
+            return None
         # 네이버는 ?type=f120 같은 리사이즈 쿼리를 붙인다 — 원본 크기로 되돌린다.
-        src = re.sub(r"\?type=\w+$", "", src)
-        if src in seen:
-            return
-        seen.add(src)
-        out.append(src)
+        return re.sub(r"\?type=\w+$", "", src)
 
-    add(_meta(page, "og:image"))
+    scored: dict[str, dict] = {}  # src -> {"src", "alt", "score"}
+
     for it in raw:
-        src = it.get("src") or ""
-        if not any(h in src for h in _IMG_HOSTS):
+        src = norm(it.get("src") or "")
+        if not src or src in scored:
             continue
-        # 로고·배너는 한 변이 짧다(400x80 등). 상품 사진은 정사각에 가깝고 크다.
-        if min(it.get("w") or 0, it.get("h") or 0) < _MIN_EDGE:
+        w, h = it.get("w") or 0, it.get("h") or 0
+        # 로고·아이콘은 한 변이 짧다. 상품 사진은 정사각에 가깝고 크다.
+        if min(w, h) < _MIN_EDGE:
             continue
         if min(it.get("dw") or 0, it.get("dh") or 0) < 80:
             continue
-        add(src)
-    return out
+        # 배너·이벤트 상세컷은 대개 2:1 이상으로 길쭉하다(상품 사진은 보통 4:5~1:1).
+        ratio = max(w, h) / max(1, min(w, h))
+        if ratio > 1.6:
+            continue
+        hint_text = f"{it.get('alt', '')} {it.get('cls', '')} {it.get('parentCls', '')}"
+        score = min(w, h) + (_HINT_BONUS if _PRODUCT_HINT_RE.search(hint_text) else 0)
+        scored[src] = {"src": src, "alt": _clean(it.get("alt") or ""), "score": score}
+
+    og = norm(_meta(page, "og:image"))
+    if og and og not in scored:
+        scored[og] = {"src": og, "alt": "", "score": _MIN_EDGE}
+
+    return sorted(scored.values(), key=lambda d: -d["score"])
 
 
 def _meta(page, prop: str) -> str:
@@ -149,18 +170,30 @@ def fetch(url: str, headless: bool = True, log=None) -> Product:
             say(f"  열림: {p.url}")
 
             body = _clean(page.inner_text("body"))
+            picked = _pick_images(page)
+            p.images = [it["src"] for it in picked]
 
-            p.name = _meta(page, "og:title") or _clean(page.title())
-            # 브랜드커넥트/스마트스토어는 og 태그가 없다 — 화면 텍스트에서 뽑는다.
-            for sel in ("h1", "h2", "h3", '[class*="productName"]', '[class*="product_name"]',
-                        '[class*="title"]'):
-                if p.name and p.name not in ("네이버 브랜드 커넥트", "네이버쇼핑"):
-                    break
+            _BAD_NAMES = ("네이버 브랜드 커넥트", "네이버쇼핑")
+            # 실측(2026-08-30): og:title/page.title() 을 먼저 쓰면 사이트 태그라인
+            # ("몽디에스 | 1등 아기화장품, ...")이 먼저 잡혀, 뒤 루프의 가드
+            # (2개 문자열만 걸러냄)를 통과해버려 더 구체적인 h1/상품명 셀렉터를
+            # 아예 시도하지 않았다. 그래서 구체적인 후보부터 순서대로 찾고,
+            # 다 실패했을 때만 og:title/title() 로 내려간다.
+            p.name = ""
+            for sel in ("h1", '[class*="productName"]', '[class*="product_name"]',
+                        "h2", "h3", '[class*="title"]'):
                 el = page.query_selector(sel)
                 if el:
                     t = _clean(el.inner_text())
-                    if 4 < len(t) < 120:
+                    if 4 < len(t) < 120 and t not in _BAD_NAMES:
                         p.name = t
+                        break
+            if not p.name and picked and picked[0]["alt"] and 4 < len(picked[0]["alt"]) < 120:
+                # 셀렉터가 다 실패해도, 대표 사진의 alt 에 상품명이 들어 있는 경우가 많다
+                # (카페24 등은 상품 이미지 alt 를 상품명으로 채운다).
+                p.name = picked[0]["alt"]
+            if not p.name:
+                p.name = _meta(page, "og:title") or _clean(page.title())
 
             p.price, p.sale_price = _prices(page)
 
@@ -168,7 +201,6 @@ def fetch(url: str, headless: bool = True, log=None) -> Product:
             if m:
                 p.rating, p.review_count = m.group(1), m.group(2)
 
-            p.images = _pick_images(page)
             say(f"  상품: {p.name[:50]} / 사진 {len(p.images)}장")
         finally:
             ctx.close()
