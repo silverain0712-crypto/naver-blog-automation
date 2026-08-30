@@ -6,3 +6,5 @@ playwright>=1.40
 openpyxl>=3.1
 pypdf>=4.0
 python-docx>=1.1
+# 정보성/화제성 글 카드뉴스 이미지 생성(modules/card_images.py)
+higgsfield-client>=0.1.0

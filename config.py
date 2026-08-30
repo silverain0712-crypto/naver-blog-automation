@@ -21,6 +21,8 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()        # DALL-E 3 이미지 생성
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "").strip()  # 무료 스톡 사진 검색
+HF_API_KEY = os.getenv("HF_API_KEY", "").strip()   # 힉스필드(카드뉴스 배경 이미지 생성)
+HF_API_SECRET = os.getenv("HF_API_SECRET", "").strip()
 # 핸드폰/네트워크 접속 시 보호용 비밀번호(설정하면 잠금, 비우면 잠금 없음)
 APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 
@@ -62,6 +64,7 @@ NAVER_PHOTO_INLINE = os.getenv("NAVER_PHOTO_INLINE", "0").strip() in ("1", "true
 NAVER_PHOTO_REARRANGE = os.getenv("NAVER_PHOTO_REARRANGE", "1").strip() in ("1", "true", "True")
 # Gemini 이미지 생성 모델(Nano Banana 계열). 사용 불가 시 thumbnail_maker 가 친절히 안내.
 GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"   # 레퍼런스 이미지를 받아 상세컷 생성(modules/product_shots.py)
+HIGGSFIELD_MODEL = "higgsfield-ai/soul/v2/standard"  # 카드뉴스 배경 이미지(modules/card_images.py)
 
 # --- 숏폼(원소스 멀티유즈) ------------------------------------------------
 # 발행 글 → 숏폼 대본. 연출 판단이라 문체 모델(Opus)까지는 필요 없고 Sonnet 이면 충분하다.

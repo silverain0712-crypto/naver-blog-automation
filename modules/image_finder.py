@@ -6,6 +6,8 @@
   - 사진 있음 + 트리거                         → DALL-E 3 추가 생성 후 기존에 append
 """
 
+from __future__ import annotations
+
 import json
 import re
 import urllib.parse
@@ -75,6 +77,30 @@ def _dalle_prompt(keyword: str, memo: str) -> str:
 def _download(url: str, timeout: int = 20) -> bytes:
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return r.read()
+
+
+def search_unsplash_query(query: str) -> bytes | None:
+    """이미 정해진 영어 검색어 하나로 Unsplash 사진 1장(bytes). 결과 없으면 None.
+
+    search_unsplash() 와 달리 Claude 로 검색어를 다시 뽑지 않는다 — 호출부가 이미
+    구체적인 영어 쿼리를 갖고 있을 때(예: modules/illustration_planner.py) 쓴다.
+    """
+    if not config.UNSPLASH_ACCESS_KEY:
+        raise ValueError("UNSPLASH_ACCESS_KEY 가 설정되지 않았습니다.")
+    url = (
+        "https://api.unsplash.com/search/photos"
+        f"?query={urllib.parse.quote(query)}&per_page=1&orientation=portrait&content_filter=high"
+    )
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Client-ID {config.UNSPLASH_ACCESS_KEY}",
+        "Accept-Version": "v1",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    results = data.get("results", [])
+    if not results:
+        return None
+    return _download(results[0]["urls"]["regular"])
 
 
 def search_unsplash(keyword: str, memo: str, count: int = 3) -> list[bytes]:

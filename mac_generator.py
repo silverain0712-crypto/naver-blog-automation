@@ -16,8 +16,14 @@ import config
 from modules import store
 from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher, benchmark, keyword_stats
 from modules import product_info, product_shots
+from modules import illustration_planner, card_images, image_finder
 from prompts.post_structures import get_structure
 from modules.llm import _RETRYABLE
+
+# 정보성/화제성 글(직접 경험 사진이 없는 글 유형)에 자동으로 카드뉴스+스톡 사진을 채운다.
+_AUTO_ILLUSTRATE_TYPES = ("info", "hompiid")
+_MAX_CARDS = 7
+_MAX_STOCK = 4
 
 POLL_SECONDS = 15
 GEN_ATTEMPTS = 2  # 간헐 네트워크 끊김 대비, 생성 전체 재시도 횟수
@@ -45,6 +51,149 @@ def _captions_from_placement(photo_placement: list[dict]) -> dict:
         if num is not None and cap:
             caps[str(num)] = cap
     return caps
+
+
+def _line_index(lines: list[str], text: str) -> int:
+    t = text.strip()
+    for i, ln in enumerate(lines):
+        if ln.strip() == t:
+            return i
+    return -1
+
+
+def _insert_after_line(lines: list[str], target: str, marker: str) -> bool:
+    """target 과 정확히 일치하는 줄 뒤에 marker 를 새 줄로 끼워 넣는다. 못 찾으면 False."""
+    i = _line_index(lines, target)
+    if i < 0:
+        return False
+    lines[i + 1:i + 1] = ["", marker]
+    return True
+
+
+def _insert_end_of_section(lines: list[str], subheadings: list[str], target: str, marker: str) -> bool:
+    """target 소제목 섹션의 '끝'(다음 소제목 직전, 마지막 섹션이면 본문 끝)에 marker 를 넣는다.
+
+    카드가 이미 그 소제목 위에 자리 잡았을 때 스톡 사진을 같은 섹션 아래쪽에 자연스럽게
+    보태기 위한 것 — _insert_after_line 처럼 소제목 바로 아래에 겹쳐 넣지 않는다.
+    """
+    start = _line_index(lines, target)
+    if start < 0:
+        return False
+    end = len(lines)
+    if target in subheadings:
+        for nxt in subheadings[subheadings.index(target) + 1:]:
+            p = _line_index(lines, nxt)
+            if p > start:
+                end = p
+                break
+    if end < len(lines):
+        # end 자리가 다음 소제목 줄 — 그 앞에는 이미 여백 줄이 있으므로 마커 뒤에만 여백을 둔다.
+        lines[end:end] = [marker, ""]
+    else:
+        # 본문 맨 끝 — 앞쪽 여백이 없으므로 직접 넣는다.
+        lines[end:end] = ["", marker]
+    return True
+
+
+def _auto_illustrate(row: dict, post: dict, structure_key: str, title: str) -> list[str]:
+    """사진 없는 정보성/화제성 글에 카드뉴스+스톡 사진을 만들어 본문에 꽂아 넣는다.
+
+    실패해도 조용히 건너뛴다(사진 없이도 글 자체는 완성된 상태라 실패가 전체를 막으면 안 됨).
+    post["body"]/post["photo_placement"] 를 제자리에서 갱신하고, 업로드된 이미지 경로를
+    돌려준다(store.update_draft 의 images 컬럼에 써야 하므로).
+    """
+    try:
+        plan = illustration_planner.plan(title, post.get("body", ""), get_structure(structure_key).get("label", ""))
+    except Exception as e:
+        print(f"  (삽화 기획 실패, 건너뜀: {str(e)[:80]})")
+        return []
+
+    body = post.get("body", "")
+    lines = body.split("\n")
+    subheadings = list(post.get("subheadings") or [])
+
+    plan_cards = list(plan.get("cards") or [])[:_MAX_CARDS]
+    # 실제 본문에 있는 소제목만 채택 — 모델이 소제목을 살짝 바꿔 적으면 자리를 못 찾는다.
+    valid_cards = [c for c in plan_cards if any(s.strip() == c.get("subheading", "").strip() for s in subheadings)]
+
+    specs = [
+        card_images.CardSpec(
+            key=str(i), bg_prompt=c.get("bg_prompt", ""),
+            lines=[str(x) for x in (c.get("lines") or [])][:3],
+            badge=c.get("badge", ""),
+        )
+        for i, c in enumerate(valid_cards)
+    ]
+    cards = []
+    if specs and card_images.enabled():
+        try:
+            cards = card_images.make_cards(specs)
+        except Exception as e:
+            print(f"  (카드뉴스 생성 실패, 건너뜀: {str(e)[:80]})")
+
+    stock_images: list[bytes] = []
+    if config.UNSPLASH_ACCESS_KEY:
+        for q in list(plan.get("stock_queries") or [])[:_MAX_STOCK]:
+            try:
+                img = image_finder.search_unsplash_query(q)
+                if img:
+                    stock_images.append(img)
+            except Exception as e:
+                print(f"  (스톡 사진 '{q}' 실패, 건너뜀: {str(e)[:60]})")
+
+    if not cards and not stock_images:
+        return []
+
+    key_to_bytes = {c.key: c.data for c in cards}
+    n = 0
+    photo_placement: list[dict] = []
+    uploaded_paths: list[str] = []
+
+    def _upload_next(data: bytes, mime: str, section: str, caption: str) -> None:
+        nonlocal n
+        n += 1
+        ext = "png" if mime == "image/png" else "jpg"
+        path = store.upload_bytes(f"{row['id']}/{n}.{ext}", data, mime)
+        uploaded_paths.append(path)
+        photo_placement.append({"photo_number": n, "section": section, "caption": caption})
+
+    # 먼저 업로드해 번호를 확정한 뒤 그 번호로 마커를 만들어야 순서가 맞는다.
+    for i, c in enumerate(valid_cards):
+        data = key_to_bytes.get(str(i))
+        if not data:
+            continue
+        n_before = n
+        _upload_next(data, "image/png", c.get("subheading", ""), " ".join(c.get("lines") or []))
+        _insert_after_line(lines, c["subheading"], f"[사진{n_before + 1}]")
+
+    # 스톡 사진은 소제목 순회하며 각 섹션 '끝'에 하나씩 고르게 분배한다(카드가 이미 있는
+    # 소제목이어도 아래쪽에 자연스럽게 보탠다). 소제목이 아예 없을 때만 인사말 뒤로 몰아 넣는다.
+    leftover: list[bytes] = []
+    for i, data in enumerate(stock_images):
+        if subheadings:
+            target = subheadings[i % len(subheadings)]
+            n_before = n
+            _upload_next(data, "image/jpeg", target, "")
+            _insert_end_of_section(lines, subheadings, target, f"[사진{n_before + 1}]")
+        else:
+            leftover.append(data)
+
+    for data in leftover:
+        n_before = n
+        _upload_next(data, "image/jpeg", "인사말", "")
+        marker = f"[사진{n_before + 1}]"
+        gi = next((i for i, l in enumerate(lines) if "안녕하세요" in l and "비비" in l), -1)
+        if gi >= 0:
+            lines.insert(gi + 1, "")
+            lines.insert(gi + 2, marker)
+        else:
+            lines.append("")
+            lines.append(marker)
+
+    post["body"] = "\n".join(lines)
+    post["photo_placement"] = photo_placement
+    print(f"  🖼️ 삽화 자동 생성: 카드 {len(cards)}장 + 스톡 {len(stock_images)}장")
+    return uploaded_paths
 
 
 def _collect_guideline(req: dict) -> str:
@@ -157,6 +306,13 @@ def generate(row: dict) -> None:
     )
 
     titles = post.get("title_candidates") or ["(제목 미정)"]
+
+    # 정보성/화제성 글은 직접 겪은 경험이 아니라 사진이 없다 — 카드뉴스+스톡 사진을
+    # 자동으로 만들어 채운다. 사용자 사진이 있으면(예: 협찬 제품 사진) 건드리지 않는다.
+    new_images: list[str] = []
+    if structure_key in _AUTO_ILLUSTRATE_TYPES and not images and not revision_request:
+        new_images = _auto_illustrate(row, post, structure_key, titles[0])
+
     suggested = post.get("suggested_keywords", [])
     # 메인 키워드(맨 앞) 중심으로 검색량·문서수 조회. API 키 없으면 빈 dict(표시만 생략).
     kw_stats = keyword_stats.fetch_stats(suggested)
@@ -180,12 +336,15 @@ def generate(row: dict) -> None:
         "size": DEFAULT_SIZE,
     }
 
-    store.update_draft(row["id"], {
+    update_fields = {
         "status": "draft_ready",
         "title": titles[0],
         "body": post.get("body", ""),
         "data": data,
-    })
+    }
+    if new_images:
+        update_fields["images"] = new_images
+    store.update_draft(row["id"], update_fields)
 
 
 def handle_learn_requests() -> None:
