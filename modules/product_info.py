@@ -22,6 +22,28 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 _TIMEOUT = 30000
 
+class ProductPageError(RuntimeError):
+    """상품 페이지 자체가 없거나 열리지 않을 때(삭제·품절·오류 페이지)."""
+
+
+# 네이버/일반몰이 "이 상품 없음"을 알려줄 때 쓰는 문구들. 이 문구가 뜨면 페이지에
+# 남아 있는 아무 이미지(대개 판매자 로고·프로모션 배너)를 상품 사진으로 오인하지 않도록
+# 여기서 먼저 걸러낸다 — 실측(2026-08-30): 삭제된 스마트스토어 상품 링크가
+# "상품이 존재하지 않습니다." 페이지로 리다이렉트됐는데, 그 판매자 로고를 레퍼런스로 써서
+# Gemini 가 전혀 다른 제품(유리병 오일)을 만들어냈다.
+_DEAD_PAGE_MARKERS = (
+    "상품이 존재하지 않습니다",
+    "존재하지 않는 상품",
+    "존재하지 않는 페이지",
+    "판매중지된 상품",
+    "품절된 상품",
+    "페이지를 찾을 수 없습니다",
+    "요청하신 페이지를 찾을 수 없습니다",
+    "시스템 오류",
+    "일시적인 오류",
+    "에러페이지",
+)
+
 # 로고·아이콘과 섞이지 않게 화면에 크게 그려진 것만 골라낸다.
 _MIN_EDGE = 180
 # 상품 갤러리 컨테이너에서 흔히 쓰는 클래스/속성 이름(카페24 xans-product-image 등).
@@ -169,7 +191,17 @@ def fetch(url: str, headless: bool = True, log=None) -> Product:
             p.url = page.url
             say(f"  열림: {p.url}")
 
+            title_text = _clean(page.title())
             body = _clean(page.inner_text("body"))
+            dead_hit = next(
+                (m for m in _DEAD_PAGE_MARKERS if m in title_text or m in body[:400]), None
+            )
+            if dead_hit:
+                raise ProductPageError(
+                    f"상품 페이지를 열 수 없습니다('{dead_hit}'). 링크가 만료됐거나 "
+                    "상품이 삭제/품절된 것 같아요 — 상품 링크를 다시 확인해주세요."
+                )
+
             picked = _pick_images(page)
             p.images = [it["src"] for it in picked]
 
