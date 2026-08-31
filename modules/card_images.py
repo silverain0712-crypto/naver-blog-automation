@@ -35,7 +35,8 @@ INK_SOFT = (128, 119, 106)     # 보조 텍스트·캡션·각주
 _BG_NEGATIVE_PROMPT = (
     "text, letters, numbers, typography, words, signage, labels, logos, brand marks, "
     "watermark, writing, captions, calendar, calendar grid, schedule, chart, graph, "
-    "table, spreadsheet, clock face, numbered grid, banknotes, coins, cash, currency"
+    "table, spreadsheet, clock face, numbered grid, banknotes, coins, cash, currency, "
+    "handwriting, engraving text, note card, greeting card, gift tag, letter, paper with text"
 )
 # 실측(2026-08-30): 프롬프트 문장에 "no text" 를 덧붙이기만 하면 무시하고 가짜 글자를
 # 그려 넣는다 — negative_prompt 파라미터로 따로 줘야 실제로 먹힌다. 액자·라벨·화면·달력처럼
