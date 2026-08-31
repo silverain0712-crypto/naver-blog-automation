@@ -65,6 +65,29 @@ class CardSpec:
     bg_prompt: str = ""          # lifestyle 전용: 힉스필드 장면 프롬프트(영어)
     footer_note: str = ""        # 정책 미확정 안내 등 하단 각주(있으면 모든 정보 카드에 표시)
 
+    def __post_init__(self):
+        # 실측(2026-08-31): 기획 LLM 이 title/subtitle/milestone 설명 같은 '한 줄' 필드에도
+        # 곧잘 줄바꿈(\n)을 끼워 넣는다. PIL 의 draw.textlength() 는 멀티라인 문자열을
+        # 못 받아 ValueError 로 죽는다 — 여기서 한 번에 공백으로 접어 방지한다.
+        def clean1(s):
+            return " ".join(str(s or "").split())
+
+        self.badge = clean1(self.badge)
+        self.title = clean1(self.title)
+        self.subtitle = clean1(self.subtitle)
+        self.caption = clean1(self.caption)
+        self.footer_note = clean1(self.footer_note)
+        self.lines = [clean1(x) for x in (self.lines or [])]
+        self.items = [clean1(x) for x in (self.items or [])]
+        self.milestones = [
+            {**m, "label": clean1(m.get("label")), "desc": clean1(m.get("desc"))}
+            for m in (self.milestones or [])
+        ]
+        self.rows = [
+            {**r, "label": clean1(r.get("label")), "before": clean1(r.get("before")), "after": clean1(r.get("after"))}
+            for r in (self.rows or [])
+        ]
+
 
 @dataclass
 class Card:
