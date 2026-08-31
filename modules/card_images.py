@@ -451,9 +451,12 @@ def make_cards(specs: list) -> list:
             else:
                 composer = _COMPOSERS.get(spec.role, _compose_card)
                 data = composer(spec)
-        except CardImageError:
+        except CardImageError as e:
+            print(f"  (카드 {spec.key}/{spec.role} 실패, 건너뜀: {str(e)[:100]})")
             continue
-        except Exception:
+        except Exception as e:
+            # 실측(2026-08-31): 여길 조용히 넘기면 개수만 줄고 로그에 원인이 안 남는다.
+            print(f"  (카드 {spec.key}/{spec.role} 렌더링 오류, 건너뜀: {type(e).__name__}: {str(e)[:100]})")
             continue
         cards.append(Card(spec.key, data))
     if not cards:
