@@ -16,14 +16,12 @@ import config
 from modules import store
 from modules import style_profiler, image_analyzer, post_generator, style_sync, guideline_parser, researcher, benchmark, keyword_stats
 from modules import product_info, product_shots
-from modules import illustration_planner, card_images, image_finder
+from modules import illustration_planner, card_images
 from prompts.post_structures import get_structure
 from modules.llm import _RETRYABLE
 
-# 정보성/화제성 글(직접 경험 사진이 없는 글 유형)에 자동으로 카드뉴스+스톡 사진을 채운다.
+# 정보성/화제성 글(직접 경험 사진이 없는 글 유형)에 자동으로 카드뉴스 10장을 채운다.
 _AUTO_ILLUSTRATE_TYPES = ("info", "hompiid")
-_MAX_CARDS = 7
-_MAX_STOCK = 4
 
 POLL_SECONDS = 15
 GEN_ATTEMPTS = 2  # 간헐 네트워크 끊김 대비, 생성 전체 재시도 횟수
@@ -95,8 +93,26 @@ def _insert_end_of_section(lines: list[str], subheadings: list[str], target: str
     return True
 
 
+def _card_spec_from_item(i: int, it: dict, footer_note: str) -> "card_images.CardSpec":
+    role = it.get("role") if it.get("role") in card_images.ROLES else "card"
+    return card_images.CardSpec(
+        key=str(i), role=role,
+        badge=it.get("badge", ""),
+        title=it.get("title", ""),
+        subtitle=it.get("subtitle", ""),
+        lines=[str(x) for x in (it.get("lines") or [])][:3],
+        caption=it.get("caption", ""),
+        milestones=list(it.get("milestones") or [])[:4],
+        rows=list(it.get("rows") or [])[:4],
+        items=[str(x) for x in (it.get("checklist_items") or [])][:5],
+        bg_prompt=it.get("bg_prompt", ""),
+        footer_note=footer_note if role != "lifestyle" else "",
+    )
+
+
 def _auto_illustrate(row: dict, post: dict, structure_key: str, title: str) -> list[str]:
-    """사진 없는 정보성/화제성 글에 카드뉴스+스톡 사진을 만들어 본문에 꽂아 넣는다.
+    """사진 없는 정보성/화제성 글에 카드뉴스 10장(표지/타임라인/비교표/카드형/체크리스트/실사)을
+    만들어 본문에 꽂아 넣는다.
 
     실패해도 조용히 건너뛴다(사진 없이도 글 자체는 완성된 상태라 실패가 전체를 막으면 안 됨).
     post["body"]/post["photo_placement"] 를 제자리에서 갱신하고, 업로드된 이미지 경로를
@@ -111,88 +127,86 @@ def _auto_illustrate(row: dict, post: dict, structure_key: str, title: str) -> l
     body = post.get("body", "")
     lines = body.split("\n")
     subheadings = list(post.get("subheadings") or [])
+    footer_note = plan.get("footer_note", "") if plan.get("is_draft_policy") else ""
 
-    plan_cards = list(plan.get("cards") or [])[:_MAX_CARDS]
-    # 실제 본문에 있는 소제목만 채택 — 모델이 소제목을 살짝 바꿔 적으면 자리를 못 찾는다.
-    valid_cards = [c for c in plan_cards if any(s.strip() == c.get("subheading", "").strip() for s in subheadings)]
-
-    specs = [
-        card_images.CardSpec(
-            key=str(i), bg_prompt=c.get("bg_prompt", ""),
-            lines=[str(x) for x in (c.get("lines") or [])][:3],
-            badge=c.get("badge", ""),
-        )
-        for i, c in enumerate(valid_cards)
-    ]
-    cards = []
-    if specs and card_images.enabled():
-        try:
-            cards = card_images.make_cards(specs)
-        except Exception as e:
-            print(f"  (카드뉴스 생성 실패, 건너뜀: {str(e)[:80]})")
-
-    stock_images: list[bytes] = []
-    if config.UNSPLASH_ACCESS_KEY:
-        for q in list(plan.get("stock_queries") or [])[:_MAX_STOCK]:
-            try:
-                img = image_finder.search_unsplash_query(q)
-                if img:
-                    stock_images.append(img)
-            except Exception as e:
-                print(f"  (스톡 사진 '{q}' 실패, 건너뜀: {str(e)[:60]})")
-
-    if not cards and not stock_images:
+    plan_items = list(plan.get("items") or [])
+    specs = [_card_spec_from_item(i, it, footer_note) for i, it in enumerate(plan_items)]
+    if not specs:
+        return []
+    if not card_images.enabled():
+        print("  (힉스필드 키 없음 — 삽화 생성 건너뜀)")
         return []
 
-    key_to_bytes = {c.key: c.data for c in cards}
+    try:
+        cards = card_images.make_cards(specs)
+    except Exception as e:
+        print(f"  (카드뉴스 생성 실패, 건너뜀: {str(e)[:80]})")
+        return []
+    if not cards:
+        return []
+
+    key_to_item = {str(i): it for i, it in enumerate(plan_items)}
+    key_to_card = {c.key: c for c in cards}
     n = 0
     photo_placement: list[dict] = []
     uploaded_paths: list[str] = []
 
-    def _upload_next(data: bytes, mime: str, section: str, caption: str) -> None:
+    def _upload_next(data: bytes, section: str, caption: str) -> str:
         nonlocal n
         n += 1
-        ext = "png" if mime == "image/png" else "jpg"
-        path = store.upload_bytes(f"{row['id']}/{n}.{ext}", data, mime)
+        path = store.upload_bytes(f"{row['id']}/{n}.png", data, "image/png")
         uploaded_paths.append(path)
         photo_placement.append({"photo_number": n, "section": section, "caption": caption})
+        return f"[사진{n}]"
 
-    # 먼저 업로드해 번호를 확정한 뒤 그 번호로 마커를 만들어야 순서가 맞는다.
-    for i, c in enumerate(valid_cards):
-        data = key_to_bytes.get(str(i))
-        if not data:
+    def _caption_of(it: dict) -> str:
+        return it.get("caption") or " ".join(it.get("lines") or []) or it.get("title", "")
+
+    # 1) cover 는 항상 맨 앞(인사말 바로 뒤) — 이 글의 대표 이미지.
+    gi = next((i for i, l in enumerate(lines) if "안녕하세요" in l and "비비" in l), -1)
+    for key, it in list(key_to_item.items()):
+        if it.get("role") != "cover" or key not in key_to_card:
             continue
-        n_before = n
-        _upload_next(data, "image/png", c.get("subheading", ""), " ".join(c.get("lines") or []))
-        _insert_after_line(lines, c["subheading"], f"[사진{n_before + 1}]")
+        marker = _upload_next(key_to_card[key].data, "인사말", _caption_of(it))
+        if gi >= 0:
+            lines[gi + 1:gi + 1] = ["", marker]
+        else:
+            lines[0:0] = [marker, ""]
+        key_to_item.pop(key)
+        key_to_card.pop(key)
 
-    # 스톡 사진은 소제목 순회하며 각 섹션 '끝'에 하나씩 고르게 분배한다(카드가 이미 있는
-    # 소제목이어도 아래쪽에 자연스럽게 보탠다). 소제목이 아예 없을 때만 인사말 뒤로 몰아 넣는다.
-    leftover: list[bytes] = []
-    for i, data in enumerate(stock_images):
+    # 2) 나머지는 subheading 이 본문과 정확히 일치하면 그 아래에 바로 꽂는다.
+    unplaced: list[tuple] = []
+    for key, it in key_to_item.items():
+        card = key_to_card.get(key)
+        if not card:
+            continue
+        sub = (it.get("subheading") or "").strip()
+        if sub and sub in subheadings:
+            marker = _upload_next(card.data, sub, _caption_of(it))
+            _insert_after_line(lines, sub, marker)
+        else:
+            unplaced.append((key, it, card))
+
+    # 3) subheading 매칭 실패분은 소제목을 고르게 순회하며 섹션 '끝'에 넣는다(그마저 없으면
+    #    인사말 뒤로). 카드형이 이미 있는 소제목이어도 아래쪽에 자연스럽게 보탠다.
+    for i, (key, it, card) in enumerate(unplaced):
         if subheadings:
             target = subheadings[i % len(subheadings)]
-            n_before = n
-            _upload_next(data, "image/jpeg", target, "")
-            _insert_end_of_section(lines, subheadings, target, f"[사진{n_before + 1}]")
+            marker = _upload_next(card.data, target, _caption_of(it))
+            _insert_end_of_section(lines, subheadings, target, marker)
         else:
-            leftover.append(data)
-
-    for data in leftover:
-        n_before = n
-        _upload_next(data, "image/jpeg", "인사말", "")
-        marker = f"[사진{n_before + 1}]"
-        gi = next((i for i, l in enumerate(lines) if "안녕하세요" in l and "비비" in l), -1)
-        if gi >= 0:
-            lines.insert(gi + 1, "")
-            lines.insert(gi + 2, marker)
-        else:
-            lines.append("")
-            lines.append(marker)
+            marker = _upload_next(card.data, "인사말", _caption_of(it))
+            gi2 = next((j for j, l in enumerate(lines) if "안녕하세요" in l and "비비" in l), -1)
+            if gi2 >= 0:
+                lines[gi2 + 1:gi2 + 1] = ["", marker]
+            else:
+                lines += ["", marker]
 
     post["body"] = "\n".join(lines)
     post["photo_placement"] = photo_placement
-    print(f"  🖼️ 삽화 자동 생성: 카드 {len(cards)}장 + 스톡 {len(stock_images)}장")
+    print(f"  🖼️ 삽화 자동 생성: {len(cards)}장 "
+          f"({', '.join(sorted({s.role for s in specs}))})")
     return uploaded_paths
 
 

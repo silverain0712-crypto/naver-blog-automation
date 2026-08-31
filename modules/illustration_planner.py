@@ -1,8 +1,10 @@
 """정보성/화제성 글(직접 경험 사진이 없는 글) 완성본을 보고 삽화 계획을 짠다.
 
-카드뉴스(힉스필드 배경 + PIL 텍스트, modules/card_images.py) 6~7장 +
-무료 스톡 사진(Unsplash, modules/image_finder.py) 3~4장, 총 10장 안팎을 기본으로 한다.
-각 카드는 실제 소제목/핵심 문장에서 뽑아 쓰므로, 본문이 다 써진 뒤에 호출해야 한다.
+유저 지정 스타일 가이드(2026-08-31): '크림 화이트 + 세이지 그린 + 피치 포인트'의 육아
+매거진 인포그래픽 톤으로 10장을 짠다. 8장은 정보 카드(표지/타임라인/비교표/카드형/
+체크리스트, modules/card_images.py 가 PIL 로만 그림 — 힉스필드 텍스트 렌더링 문제와
+무관), 2장은 생활감 있는 실사(힉스필드). 10장이 다 같은 틀로 보이지 않게 레이아웃에
+변화를 준다(기본 배분: 표지1·타임라인1·비교표2·카드형3·실사2·체크리스트1).
 """
 
 from __future__ import annotations
@@ -10,51 +12,101 @@ from __future__ import annotations
 import config
 from modules.llm import call_json
 
-_SCHEMA = {
+_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
-        "cards": {
+        "key": {"type": "string"},
+        "role": {"type": "string", "enum": ["cover", "timeline", "comparison", "card", "checklist", "lifestyle"]},
+        "subheading": {"type": "string"},  # 이 카드가 붙을 본문 소제목(본문 글자와 동일). 없으면 "".
+        "badge": {"type": "string"},
+        "title": {"type": "string"},
+        "subtitle": {"type": "string"},
+        "lines": {"type": "array", "items": {"type": "string"}},
+        "caption": {"type": "string"},
+        "milestones": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "subheading": {"type": "string"},  # 이 카드가 붙을 본문 소제목(본문 글자와 동일해야 함)
-                    "badge": {"type": "string"},        # 짧은 배지 문구(예: "정보", "STEP 1", "01")
-                    "lines": {"type": "array", "items": {"type": "string"}},  # 카드에 얹을 한글 1~3줄
-                    "bg_prompt": {"type": "string"},    # 영어 배경 이미지 프롬프트
+                    "label": {"type": "string"}, "desc": {"type": "string"}, "highlight": {"type": "boolean"},
                 },
-                "required": ["subheading", "badge", "lines", "bg_prompt"],
+                "required": ["label", "desc", "highlight"],
                 "additionalProperties": False,
             },
         },
-        "stock_queries": {"type": "array", "items": {"type": "string"}},  # 영어 스톡 검색어
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"}, "before": {"type": "string"}, "after": {"type": "string"},
+                },
+                "required": ["label", "before", "after"],
+                "additionalProperties": False,
+            },
+        },
+        "checklist_items": {"type": "array", "items": {"type": "string"}},
+        "bg_prompt": {"type": "string"},  # lifestyle 전용, 영어
     },
-    "required": ["cards", "stock_queries"],
+    "required": ["key", "role", "subheading", "badge", "title", "subtitle", "lines",
+                 "caption", "milestones", "rows", "checklist_items", "bg_prompt"],
+    "additionalProperties": False,
+}
+
+_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_draft_policy": {"type": "boolean"},  # 아직 확정 안 된 제도/정책/발표안이면 true
+        "footer_note": {"type": "string"},        # is_draft_policy 면 각주 문구, 아니면 ""
+        "items": {"type": "array", "items": _ITEM_SCHEMA},
+    },
+    "required": ["is_draft_policy", "footer_note", "items"],
     "additionalProperties": False,
 }
 
 _SYSTEM = """\
-너는 정보성/화제성 네이버 블로그 글에 들어갈 삽화를 기획하는 아트 디렉터다.
-이 글은 필자가 직접 겪은 경험이 아니라 정보를 정리한 글이라, 실사 후기 사진이 없다.
-대신 (1) 카드뉴스 이미지와 (2) 무료 스톡 사진으로 본문을 시각적으로 채운다.
+너는 네이버 육아 정보 블로그용 이미지 기획자다. 다 쓰인 본문을 보고 카드뉴스 10장을 기획한다.
 
-[카드뉴스 6~7장]
-- 본문에 실제로 있는 소제목 중 정보 밀도가 높은 것들을 골라 하나씩 카드로 만든다.
-  subheading 은 본문에 쓰인 소제목과 토씨 하나까지 동일해야 한다(찾아서 그 아래 삽입할 것이므로).
-- lines 는 그 소제목 아래 문장에서 실제로 있는 핵심 사실/수치를 1~3줄 짧게 뽑는다.
-  본문에 없는 숫자·사실을 지어내지 마라.
-- badge 는 "정보", "STEP n", "01" 처럼 아주 짧게.
-- bg_prompt 는 영어로, 그 소제목 내용과 어울리는 장면을 묘사한다. 절대 액자·포스터·간판·
-  제품 라벨·화면(모니터/계기판)·달력·스케줄표·차트·표·그래프처럼 원래 글자나 숫자가
-  있을 법한 사물을 넣지 마라(이미지 생성 모델이 그 자리에 깨진 가짜 글자·숫자를 그려
-  넣는다 — "적용 시점" 같은 날짜 관련 주제라도 달력을 그리지 말고 계절감·빛·달력이 아닌
-  사물로 우회해서 표현하라). 질감, 손, 식물, 빛, 사물의 실루엣처럼 글자 없는 소재로
-  장면을 짜라. "no text/no people's faces" 같은 문구는 안 넣어도 된다(시스템이 자동으로
-  처리한다).
+[전체 톤]
+크림 화이트 배경에 옅은 세이지 그린 + 피치 포인트를 쓰는 육아 매거진 인포그래픽이다
+(배경·색상은 이미 코드에 고정돼 있으니 너는 내용만 기획하면 된다). 공공기관 카드뉴스처럼
+딱딱하지 않고, 부드럽고 신뢰감 있게. 광고 느낌 금지.
 
-[스톡 사진 3~4장]
-- 카드로 다루지 않은 나머지 분위기/맥락을 무료 스톡 사진으로 채운다.
-- stock_queries 는 Unsplash 검색에 쓸 영어 키워드 2~3단어 조합으로, 카드와 겹치지 않게.
+[10장 구성 — role 로 지정. 레이아웃이 다 같아 보이지 않게 반드시 섞어라]
+기본 배분(주제에 맞게 ±1장 조정 가능, 그래도 다양성은 유지):
+- cover 1장: 표지. 제목 + 부제.
+- timeline 1장: 시행 기준/적용 시점처럼 순서·시점이 있는 내용. milestones 2~4개
+  (예: "2027년 6월 30일까지" → "기존 체계 유지", "2027년 7월 1일부터" → "새 제도 적용",
+  뒤쪽 milestone 에 highlight:true).
+- comparison 2장: 기존 vs 변경안처럼 대조되는 내용. rows 는 label(항목명)+before(기존 값)+
+  after(변경 값) 3~4개.
+- card 3장: 핵심 금액/혜택/조건 요약. lines 1~3줄(짧고 굵게, 숫자 중심).
+- checklist 1장: 신청 방법, 확인할 점, 주의사항처럼 나열형 내용. checklist_items 3~5개.
+- lifestyle 2장: 힉스필드로 만들 생활감 사진(사람 등장 가능). caption 은 짧은 한 줄이거나
+  생략 가능.
+
+각 항목의 subheading 은 본문에 실제로 있는 소제목과 토씨 하나까지 동일해야 한다(그 아래
+삽입하려고 찾는 데 쓰인다). cover/checklist/lifestyle 처럼 특정 소제목에 안 붙어도 되면
+가장 관련 있는 소제목을 적거나, 정말 없으면 빈 문자열로 둬라.
+
+[사실 정보 규칙]
+- 모든 수치·날짜·기준은 본문에 실제로 있는 것만 써라. 본문에 없는 숫자를 지어내지 마라.
+- 본문을 보고 이 글이 다루는 제도/정책이 "확정"이 아니라 "개편안/발표안/시안"이면
+  is_draft_policy 를 true 로 하고, footer_note 에 아래 중 자연스러운 쪽으로 짧게 써라
+  ("정부 개편안 기준" 또는 "법 개정 및 예산 확정 절차에 따라 달라질 수 있음" 계열).
+  확정된 내용이면 is_draft_policy 는 false, footer_note 는 "".
+
+[lifestyle 2장의 bg_prompt 작성 규칙 — 영어로]
+- 따뜻한 한국 가정집 분위기: 자연광, 크림·우드·세이지 톤, 편안하고 정돈된 공간.
+  한국인으로 보이는 부모·아이가 등장해도 되지만, 특정 인물처럼 식별되지 않게 뒷모습·
+  손 클로즈업·옆모습·아웃포커스처럼 얼굴이 뚜렷하게 특정되지 않는 구도로 써라.
+- 액자·포스터·간판·화면·달력·시계처럼 원래 글자·숫자가 있는 사물은 넣지 마라(이미지
+  생성 모델이 그 자리에 깨진 가짜 글자를 그려 넣는다).
+- 화폐(지폐·동전)는 절대 넣지 마라.
+- "no text" 같은 문구는 안 넣어도 된다(시스템이 자동으로 처리한다).
+
+나머지 role(cover/timeline/comparison/card/checklist)의 bg_prompt 는 빈 문자열로 둬라
+(전부 PIL 로만 그린다).
 """
 
 
@@ -65,5 +117,5 @@ def plan(title: str, body: str, structure_label: str) -> dict:
         system=_SYSTEM,
         content=[{"type": "text", "text": user_text}],
         schema=_SCHEMA,
-        max_tokens=4000,
+        max_tokens=5000,
     )
