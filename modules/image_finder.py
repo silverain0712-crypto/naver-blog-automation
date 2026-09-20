@@ -103,6 +103,67 @@ def search_unsplash_query(query: str) -> bytes | None:
     return _download(results[0]["urls"]["regular"])
 
 
+_KOREAN_CHECK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "has_person": {"type": "boolean"},
+        "looks_korean_or_asian": {"type": "boolean"},
+    },
+    "required": ["has_person", "looks_korean_or_asian"],
+    "additionalProperties": False,
+}
+
+
+def _looks_korean_or_no_person(image_bytes: bytes) -> bool:
+    """사진에 사람이 없거나, 있다면 동아시아(한국인으로 보일 법한) 인상이면 True.
+
+    2026-09-14: 육아 블로그용 실사 스톡이 서구권 인물 위주로 나온다는 피드백 →
+    검색어에 "korean"을 붙이는 것만으론 보장이 안 돼(Unsplash에 인종 필터가 없다),
+    후보 사진을 비전으로 한 번 더 걸러서 명백히 서구권 인물인 사진은 버린다."""
+    from modules.llm import call_json, prepare_image_block
+    try:
+        result = call_json(
+            model=config.VISION_MODEL,
+            system=(
+                "이 사진에 사람이 뚜렷한 주요 피사체로 등장하는지 보고, 등장한다면 "
+                "동아시아인(한국인처럼 보일 법한) 인상인지 판단하라. 사람이 없거나 "
+                "멀리 흐릿하게만 보이면 has_person=false. 서구권 백인/흑인 등 명백히 "
+                "동아시아인으로 보기 어려운 인물이 주요 피사체면 looks_korean_or_asian=false."
+            ),
+            content=[prepare_image_block(image_bytes), {"type": "text", "text": "판단하라."}],
+            schema=_KOREAN_CHECK_SCHEMA,
+            max_tokens=50,
+        )
+        return (not result.get("has_person")) or bool(result.get("looks_korean_or_asian"))
+    except Exception:
+        return True  # 판정 실패 시 통과(스톡 자체를 못 쓰게 막지는 않는다)
+
+
+def search_unsplash_korean(query: str, candidates: int = 4) -> bytes | None:
+    """search_unsplash_query() 의 인종 필터 버전. 후보 여러 장을 받아 비전으로
+
+    '사람이 없거나 동아시아인으로 보이는' 첫 사진을 고른다. 전부 탈락하거나 결과가
+    없으면 None(호출부가 AI 생성으로 대체 — 이땐 얼굴을 한국인으로 직접 그린다)."""
+    if not config.UNSPLASH_ACCESS_KEY:
+        return None
+    query = query if re.search(r"korean|south korea|\basian\b", query, re.IGNORECASE) else f"{query} korean"
+    url = (
+        "https://api.unsplash.com/search/photos"
+        f"?query={urllib.parse.quote(query)}&per_page={candidates}&orientation=portrait&content_filter=high"
+    )
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Client-ID {config.UNSPLASH_ACCESS_KEY}",
+        "Accept-Version": "v1",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    for p in data.get("results", [])[:candidates]:
+        img = _download(p["urls"]["regular"])
+        if _looks_korean_or_no_person(img):
+            return img
+    return None
+
+
 def search_unsplash(keyword: str, memo: str, count: int = 3) -> list[bytes]:
     """Unsplash 스톡 사진 검색 후 이미지 bytes 리스트 반환."""
     if not config.UNSPLASH_ACCESS_KEY:
