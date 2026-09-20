@@ -37,17 +37,36 @@ _PROFILE_SCHEMA = {
 
 
 def _samples() -> list[tuple[str, str]]:
-    """style_samples/*.txt, *.md 의 (파일명, 본문) 목록."""
-    out = []
+    """style_samples/*.txt, *.md 의 (파일명, 본문) 목록.
+
+    2026-09-20: published_<logno>.txt(발행 글마다 자동 누적, 상한 없음)가 114개까지
+    쌓이면서 재분석 1회가 30만 토큰(Opus, $1.5+)까지 커진 걸 확인해 상한을 걸었다.
+    수동 지정 시드 샘플(published_ 접두어 없는 파일, 예: 01_서울형키즈카페_신당점.txt)은
+    항상 포함하고, published_ 는 logno(=발행 시점)가 가장 최근인
+    config.STYLE_PROFILE_MAX_SAMPLES 개만 남긴다 — 최근 글일수록 지금 문체를 더 잘
+    대표하므로 오래된 글을 잘라내도 품질 손실은 적다."""
+    all_files: list[tuple[str, str]] = []
     if not config.STYLE_SAMPLES_DIR.exists():
-        return out
+        return all_files
     for p in sorted(config.STYLE_SAMPLES_DIR.iterdir()):
         if p.name.startswith("_") or p.name.lower() == "readme.md":
             continue
         if p.suffix.lower() in (".txt", ".md"):
             text = p.read_text(encoding="utf-8").strip()
             if text:
-                out.append((p.name, text))
+                all_files.append((p.name, text))
+
+    seed = [(n, t) for n, t in all_files if not n.startswith("published_")]
+    published = []
+    for n, t in all_files:
+        m = re.search(r"published_(\d+)", n)
+        if m:
+            published.append((int(m.group(1)), n, t))
+    published.sort(reverse=True)  # logno 큰(=최신) 순
+    capped = published[: config.STYLE_PROFILE_MAX_SAMPLES]
+
+    out = seed + [(n, t) for _, n, t in capped]
+    out.sort()
     return out
 
 

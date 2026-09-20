@@ -20,6 +20,7 @@ from prompts.style_rules import STYLE_RULES
 from prompts.edit_lessons import EDIT_LESSONS
 from prompts.geo_structure import GEO_STRUCTURE
 from prompts.naeo_rules import NAEO_RULES
+from prompts.safety_rules import SAFETY_RULES
 
 _POST_SCHEMA = {
     "type": "object",
@@ -323,6 +324,8 @@ def generate_post(
     system = (
         STYLE_RULES
         + "\n\n"
+        + SAFETY_RULES
+        + "\n\n"
         + EDIT_LESSONS
         + "\n\n"
         + GEO_STRUCTURE
@@ -396,7 +399,7 @@ def generate_post(
         "가능하면 글당 1~2개 넣어라(표는 상위노출 신호). 단 억지 표는 금지, "
         "표 안에는 [사진N]을 넣지 마라. 예:\n"
         "[표]\n구분 | 내용 | 비고\n수하물표 | 짐 추적에 필요 | 사진 보관\n신고 시점 | 입국장 나가기 전 | 필수\n[/표]\n"
-        "- 인용구: 반드시 \"안녕하세요, 비비입니다 :)\" 인사말 **뒤**, 첫 소제목 **앞**의 "
+        "- 인용구: 반드시 회색 요약 블록 **뒤**, 첫 소제목 **앞**의 "
         "도입부 안에 [인용]과 [/인용] 사이로 넣어라. 글 맨 위(큰 제목·회색 요약 블록)에는 "
         "절대 넣지 마라 — 그 자리는 제목 영역이라 인용구가 제목 글자로 찍힌다. "
         "내용은 이 글의 핵심 결론을 "
@@ -444,11 +447,19 @@ def generate_post(
         max_tokens=16000,
     )
 
+    # 이후의 부분 수정 단계(분량 늘리기, NAEO 보정)는 이미 쓴 본문을 톤 유지하며
+    # 부분적으로 손보는 작업이라, 처음 쓸 때 필요했던 SEO 구조·리서치·벤치마킹·가이드라인
+    # 원문까지 다시 보낼 필요가 없다(어차피 densify 는 그 사실들을 sources 로 따로 받는다).
+    # 2026-09-20: 이 전체 system(2만자+)을 그대로 재사용해 매번 다시 보내던 걸 확인해
+    # 문체·안전 규칙만 남긴 경량 버전으로 분리했다 — Opus로 한 번 더 쓰는 게 아니라
+    # Sonnet 보정이라 비용 영향이 크다.
+    edit_system = STYLE_RULES + "\n\n" + SAFETY_RULES + "\n\n" + profile_to_prompt(style_guide)
+
     # 목표 길이(공백 제외) 미달이면 1회만 본문을 늘려 채운다(폰 즉시성 우선).
     # 과거 최대 3회 → Opus 대용량 호출이 최대 3연타로 붙어 수 분 지연되던 것을 축소.
     actual = _content_len(post.get("body", ""))
     if actual < length:
-        expanded = _expand_body(system, post.get("body", ""), length, actual)
+        expanded = _expand_body(edit_system, post.get("body", ""), length, actual)
         if _content_len(expanded) > actual:
             post["body"] = expanded
 
@@ -475,7 +486,7 @@ def generate_post(
                 ) if s
             )
             fixed = naeo_audit.densify(
-                system=system,
+                system=edit_system,
                 body=post.get("body", ""),
                 issues=fixable,
                 sources=sources,

@@ -139,11 +139,16 @@ def _looks_korean_or_no_person(image_bytes: bytes) -> bool:
         return True  # 판정 실패 시 통과(스톡 자체를 못 쓰게 막지는 않는다)
 
 
-def search_unsplash_korean(query: str, candidates: int = 4) -> bytes | None:
+def search_unsplash_korean(query: str, candidates: int = 2) -> bytes | None:
     """search_unsplash_query() 의 인종 필터 버전. 후보 여러 장을 받아 비전으로
 
     '사람이 없거나 동아시아인으로 보이는' 첫 사진을 고른다. 전부 탈락하거나 결과가
-    없으면 None(호출부가 AI 생성으로 대체 — 이땐 얼굴을 한국인으로 직접 그린다)."""
+    없으면 None(호출부가 AI 생성으로 대체 — 이땐 얼굴을 한국인으로 직접 그린다).
+
+    2026-09-20: 후보 4→2 로 낮췄다(카드 1장당 비전 판정 비용 절반). 검색어에 이미
+    "korean"을 강제로 붙이고 있어(위) 후보 자체가 애초에 한국 관련 사진 위주로 오므로,
+    2장으로도 판정 성공률은 크게 안 떨어질 걸로 본다 — 못 찾으면 AI 생성으로 자연스럽게
+    폴백된다(다른 API라 이 비용 절감과는 무관)."""
     if not config.UNSPLASH_ACCESS_KEY:
         return None
     query = query if re.search(r"korean|south korea|\basian\b", query, re.IGNORECASE) else f"{query} korean"

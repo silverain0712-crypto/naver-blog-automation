@@ -83,6 +83,11 @@ BASE_DIR = Path(__file__).resolve().parent
 STYLE_SAMPLES_DIR = BASE_DIR / "style_samples"
 OUTPUT_DIR = BASE_DIR / "output"
 STYLE_PROFILE_CACHE = STYLE_SAMPLES_DIR / "_profile.json"
+# 문체 프로파일러가 한 번에 재분석할 발행 글 샘플 수 상한(published_<logno>.txt 만 해당,
+# 수동 지정 시드 샘플은 상한과 무관하게 항상 포함). 2026-09-20: 발행 글이 쌓일수록
+# (당시 114개, 30만 토큰) 재분석 1회가 Opus로 $1.5+ 드는 게 확인돼 상한을 걸었다 —
+# 최근 글일수록 문체를 더 잘 대표하므로 최신 N개만 써도 품질 손실은 적다.
+STYLE_PROFILE_MAX_SAMPLES = int(os.getenv("STYLE_PROFILE_MAX_SAMPLES", "15").strip() or "15")
 
 # --- 입력 옵션 ------------------------------------------------------------
 # 글 유형 (key: post_structures 의 구조 키와 일치). 협찬 여부 축은 폐지 — 글 유형 하나로만 구분한다.
