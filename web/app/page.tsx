@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   POST_TYPES,
   POST_LENGTHS,
-  PHOTO_STYLES,
   OPTIONAL_FIELDS,
 } from "@/lib/constants";
 
@@ -64,6 +63,29 @@ async function decode(file: File): Promise<Decoded> {
 // 움짤 몇 개로 Supabase 무료 한도(1GB)를 태울 수 있어 장당 상한을 둔다.
 const GIF_MAX_BYTES = 10 * 1024 * 1024;
 
+// 동영상 첨부(사진 저장소와 별개) — 글 작성 시 미리 잘라 GIF 로 만들면 블로그 사진처럼
+// 쓰이고, 원본 영상은 나중에 클립(숏폼) 단계에서 그대로 활용된다.
+const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+const VIDEO_MAX_COUNT = 5;
+
+// 로컬 파일에서 영상 길이(초)를 읽는다(업로드 없이 <video> 메타데이터만).
+function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(v.duration) ? v.duration : 0);
+    };
+    v.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(0);
+    };
+    v.src = url;
+  });
+}
+
 async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<Blob> {
   const src = await decode(file);
   let w = src.w;
@@ -92,6 +114,7 @@ async function resizeImage(file: File, maxEdge = 1600, quality = 0.82): Promise<
 }
 
 type Pic = { file: File; url: string };
+type Vid = { file: File; url: string; duration: number; start: number; end: number; useGif: boolean };
 
 export default function NewPostPage() {
   const router = useRouter();
@@ -99,14 +122,19 @@ export default function NewPostPage() {
   const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
   const [showOptional, setShowOptional] = useState(false);
+  const [structureKey, setStructureKey] = useState("restaurant");
+  const [showPhotoPicker, setShowPhotoPicker] = useState(false);
   const [pics, setPics] = useState<Pic[]>([]);
+  const [vids, setVids] = useState<Vid[]>([]);
   const [guideFiles, setGuideFiles] = useState<File[]>([]);
   const [guideText, setGuideText] = useState("");
   const [dragPhotos, setDragPhotos] = useState(false);
   const [dragGuide, setDragGuide] = useState(false);
   const [learning, setLearning] = useState(false);
   const [learnMsg, setLearnMsg] = useState("");
+  const [pendingIdeaId, setPendingIdeaId] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const memoRef = useRef<HTMLTextAreaElement>(null);
 
   // PC 에서 드롭존 밖에 파일을 떨궜을 때 브라우저가 파일을 열어버리는 것 방지.
   useEffect(() => {
@@ -117,6 +145,24 @@ export default function NewPostPage() {
       window.removeEventListener("dragover", prevent);
       window.removeEventListener("drop", prevent);
     };
+  }, []);
+
+  // 글감 메모(/ideas)에서 "이걸로 글쓰기"로 넘어온 경우 메모칸을 채운다.
+  // 실제로 초안이 만들어지면(submit 성공) 그 메모를 지운다.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("pendingIdea");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { id?: string; text?: string; memo?: string };
+        // 글감 제목 + (있으면) 상세 메모를 합쳐서 채운다.
+        const filled = [parsed?.text, parsed?.memo].filter((s) => s && s.trim()).join("\n\n");
+        if (filled && memoRef.current) memoRef.current.value = filled;
+        if (parsed?.id) setPendingIdeaId(parsed.id);
+        localStorage.removeItem("pendingIdea");
+      }
+    } catch {
+      /* 무시 */
+    }
   }, []);
 
   // 사진 추가(입력/드롭 공용) — 이미지 파일만 받는다.
@@ -143,6 +189,63 @@ export default function NewPostPage() {
       URL.revokeObjectURL(prev[i].url);
       return prev.filter((_, idx) => idx !== i);
     });
+  }
+
+  // 동영상 추가 — 최대 5개 · 개당 100MB. 각각 길이를 읽어 기본 트림 구간(0~8초 또는
+  // 전체 길이)을 잡아준다. 실제 업로드는 제출 시점에 한다(여기선 로컬 미리보기만).
+  async function addVideoFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const files = Array.from(list).filter((f) => f.type.startsWith("video/"));
+    if (files.length === 0) return;
+    const room = VIDEO_MAX_COUNT - vids.length;
+    if (room <= 0) {
+      setErr(`동영상은 최대 ${VIDEO_MAX_COUNT}개까지 첨부할 수 있어요.`);
+      return;
+    }
+    const tooBig = files.filter((f) => f.size > VIDEO_MAX_BYTES);
+    const ok = files.filter((f) => !tooBig.includes(f)).slice(0, room);
+    if (tooBig.length > 0) {
+      const mb = (VIDEO_MAX_BYTES / 1024 / 1024).toFixed(0);
+      setErr(`동영상 ${tooBig.length}개가 ${mb}MB를 넘어 제외했습니다.`);
+    }
+    const next: Vid[] = [];
+    for (const f of ok) {
+      const duration = await getVideoDuration(f);
+      next.push({
+        file: f,
+        url: URL.createObjectURL(f),
+        duration,
+        start: 0,
+        end: duration ? Math.min(duration, 8) : 8,
+        useGif: true,
+      });
+    }
+    setVids((prev) => [...prev, ...next]);
+  }
+  function removeVideo(i: number) {
+    setVids((prev) => {
+      URL.revokeObjectURL(prev[i].url);
+      return prev.filter((_, idx) => idx !== i);
+    });
+  }
+  function updateVideo(i: number, patch: Partial<Vid>) {
+    setVids((prev) => prev.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
+  }
+  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const trackRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // 핸들을 드래그하는 동안 그 지점으로 계속 옮겨서 미리보기가 바로 따라오게 한다
+  // (영상은 autoPlay+muted로 이미 재생 중이라 별도로 play() 호출은 필요 없다).
+  function seekVideo(i: number, t: number) {
+    const el = videoRefs.current[i];
+    if (el) el.currentTime = t;
+  }
+  // 재생 영역(트랙) 안에서 포인터의 x좌표를 그 영상의 초 단위 시각으로 변환한다.
+  function clientXToTime(i: number, clientX: number, dur: number): number {
+    const el = trackRefs.current[i];
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return ratio * dur;
   }
 
   // 가이드/설명서 파일 추가(입력/드롭 공용) — 여러 개 누적. 이미지 필터는 두지 않는다(엑셀·PDF 등).
@@ -207,13 +310,15 @@ export default function NewPostPage() {
         required_links: str("required_links"),
         memo: str("memo"),
         length: str("length"),
-        photo_style: str("photo_style"),
         optional_fields: optional,
         photoCount: pics.length,
         photoMimes: pics.map((p) => p.file.type),
+        videoCount: vids.length,
+        videoNames: vids.map((v) => v.file.name),
         guidelineNames: guideFiles.map((f) => f.name),
         guidelineText: guideText.trim(),
         generateShots: Boolean(fd.get("generate_shots")) && Boolean(str("product_link")),
+        isSponsored: Boolean(fd.get("is_sponsored")),
       },
       memo: str("memo"),
     };
@@ -230,10 +335,11 @@ export default function NewPostPage() {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.error ?? "요청 실패");
     }
-    const { id, uploads, guidelineUploads } = (await res.json()) as {
+    const { id, uploads, guidelineUploads, videoUploads } = (await res.json()) as {
       id: string;
       uploads: { path: string; url: string }[];
       guidelineUploads: { path: string; url: string }[];
+      videoUploads: { path: string; url: string }[];
     };
 
     // 사진을 서명 URL 로 직접 업로드(Vercel 함수 우회).
@@ -272,27 +378,101 @@ export default function NewPostPage() {
       });
       if (!put.ok) throw new Error(`가이드/설명서 ${i + 1} 업로드 실패 (${put.status})`);
     }
+
+    // 동영상 업로드(원본 그대로) → 완료되면 트림 구간 포함 메타를 확정 저장.
+    if (videoUploads.length > 0) {
+      for (let i = 0; i < videoUploads.length; i++) {
+        setProgress(`동영상 업로드 ${i + 1}/${videoUploads.length}`);
+        const v = vids[i];
+        const put = await fetch(videoUploads[i].url, {
+          method: "PUT",
+          headers: { "content-type": v.file.type || "video/mp4" },
+          body: v.file,
+        });
+        if (!put.ok) throw new Error(`동영상 ${i + 1} 업로드 실패 (${put.status})`);
+      }
+      const videoMeta = videoUploads.map((u, i) => ({
+        path: u.path,
+        name: vids[i].file.name,
+        size: vids[i].file.size,
+        start: vids[i].start,
+        end: vids[i].end,
+        gif_photo_number: null as number | null,
+      }));
+      await fetch(`/api/drafts/${id}/videos`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videos: videoMeta }),
+      });
+    }
     return id;
   }
+
+  // 체크된 동영상마다 순서대로 GIF 변환을 요청하고 끝날 때까지 기다린다(3초 폴링).
+  // 실패해도 그 영상만 건너뛰고 계속 진행 — 한 개 실패로 글 작성 전체를 막지 않는다.
+  async function extractGifs(id: string) {
+    const targets = vids.map((v, i) => ({ v, i })).filter(({ v }) => v.useGif);
+    const failed: string[] = [];
+    for (let k = 0; k < targets.length; k++) {
+      const { v, i } = targets[k];
+      setProgress(`GIF 변환 중 (${k + 1}/${targets.length})…`);
+      const res = await fetch(`/api/drafts/${id}/gif`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_index: i }),
+      });
+      if (!res.ok) {
+        failed.push(`${v.file.name}: 요청 실패`);
+        continue; // 이 영상은 건너뛰고 다음으로 — 한 개 실패로 글 작성 전체를 막지 않는다.
+      }
+      for (let t = 0; t < 40; t++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const r = await fetch(`/api/drafts/${id}/gif`, { cache: "no-store" });
+        if (!r.ok) continue;
+        const { job } = (await r.json()) as { job?: { status?: string; error?: string } | null };
+        if (job?.status === "done") break;
+        if (job?.status === "error") {
+          failed.push(`${v.file.name}: ${job.error || "변환 실패"}`);
+          break;
+        }
+      }
+    }
+    if (failed.length > 0) {
+      setErr(`일부 동영상은 GIF로 못 만들었어요 — ${failed.join(" / ")}`);
+    }
+  }
+
+  const noPhotoNeeded = structureKey === "info" || structureKey === "hompiid";
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErr("");
     const { meta, memo } = buildMeta();
-    if (!memo && pics.length === 0) {
-      setErr("메모나 사진 중 하나는 넣어주세요.");
+    if (!memo && pics.length === 0 && vids.length === 0) {
+      setErr("메모나 사진, 동영상 중 하나는 넣어주세요.");
       return;
     }
     setBusy(true);
     try {
       const id = await uploadAssets(meta);
-      // 업로드가 있었으면 생성 시작 상태로 전환(사진/가이드 없으면 POST 가 이미 generating).
-      if (meta.photoCount || guideFiles.length > 0) {
+      // GIF 로 만들 동영상이 있으면 초안 생성(status=generating) 을 켜기 전에 먼저
+      // 끝낸다 — image_analyzer.py 가 이미지를 넘겨받는 시점에 그 GIF가 images[] 에
+      // 들어가 있어야 다른 사진과 동일하게 분석·배치된다(블로그 생성 코드는 무수정).
+      if (vids.some((v) => v.useGif)) {
+        await extractGifs(id);
+      }
+      // 업로드가 있었으면 생성 시작 상태로 전환(사진/가이드/영상 없으면 POST 가 이미 generating).
+      if (meta.photoCount || guideFiles.length > 0 || vids.length > 0) {
+        setProgress("초안 생성 준비 중…");
         await fetch(`/api/drafts/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "generating" }),
         });
+      }
+      // 글감 메모에서 시작한 글이면, 실제로 써지기 시작했으니 메모는 지운다.
+      if (pendingIdeaId) {
+        fetch(`/api/ideas/${pendingIdeaId}`, { method: "DELETE" }).catch(() => {});
       }
       router.push(`/edit/${id}`);
     } catch (e) {
@@ -340,6 +520,9 @@ export default function NewPostPage() {
           >
             {learning ? "학습 중…" : "📚 발행글 학습"}
           </button>
+          <Link href="/ideas" className="text-blue-600">
+            💡 글감 메모
+          </Link>
           <Link href="/list" className="text-blue-600">
             내 글 →
           </Link>
@@ -354,7 +537,12 @@ export default function NewPostPage() {
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
             <span className={labelC}>글 유형</span>
-            <select name="structure_key" className={field} defaultValue="restaurant">
+            <select
+              name="structure_key"
+              className={field}
+              value={structureKey}
+              onChange={(e) => setStructureKey(e.target.value)}
+            >
               {POST_TYPES.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.label}
@@ -372,16 +560,6 @@ export default function NewPostPage() {
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1">
-            <span className={labelC}>사진 노출</span>
-            <select name="photo_style" className={field} defaultValue="감성 중심">
-              {PHOTO_STYLES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
 
         <label className="flex flex-col gap-1">
@@ -392,6 +570,7 @@ export default function NewPostPage() {
         <label className="flex flex-col gap-1">
           <span className={labelC}>메모 — 최우선 반영</span>
           <textarea
+            ref={memoRef}
             name="memo"
             className={`${field} min-h-28`}
             placeholder="오늘 있었던 일, 느낌, 꼭 담고 싶은 내용을 편하게 적어주세요."
@@ -419,37 +598,55 @@ export default function NewPostPage() {
 
         <div className="flex flex-col gap-2">
           <span className={labelC}>사진 {pics.length > 0 && `· ${pics.length}장`}</span>
-          <label
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragPhotos(true);
-            }}
-            onDragLeave={() => setDragPhotos(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragPhotos(false);
-              addFiles(e.dataTransfer.files);
-            }}
-            className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed py-6 transition-colors ${
-              dragPhotos
-                ? "border-blue-400 bg-blue-50 text-blue-500"
-                : "border-neutral-300 bg-neutral-50 text-neutral-500 active:bg-neutral-100"
-            }`}
-          >
-            <span className="text-3xl">📷</span>
-            <span className="text-sm font-medium text-neutral-600">탭하거나 끌어다 놓기</span>
-            <span className="text-xs text-neutral-400">여러 장 · GIF 도 가능해요</span>
-            <input
-              type="file"
-              accept="image/*,image/gif"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                addFiles(e.target.files);
-                e.currentTarget.value = "";
+
+          {noPhotoNeeded && pics.length === 0 && !showPhotoPicker ? (
+            <div className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+              ✨ 이 글 유형은 사진 없이 제출해도 발행용 카드뉴스 이미지를 자동으로 만들어드려요.
+              <button
+                type="button"
+                onClick={() => setShowPhotoPicker(true)}
+                className="ml-1 font-medium text-emerald-700 underline underline-offset-2"
+              >
+                그래도 사진을 넣고 싶다면
+              </button>
+            </div>
+          ) : (
+            <label
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragPhotos(true);
               }}
-            />
-          </label>
+              onDragLeave={() => setDragPhotos(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragPhotos(false);
+                addFiles(e.dataTransfer.files);
+              }}
+              className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed py-6 transition-colors ${
+                dragPhotos
+                  ? "border-blue-400 bg-blue-50 text-blue-500"
+                  : "border-neutral-300 bg-neutral-50 text-neutral-500 active:bg-neutral-100"
+              }`}
+            >
+              <span className="text-3xl">📷</span>
+              <span className="text-sm font-medium text-neutral-600">탭하거나 끌어다 놓기</span>
+              <span className="text-xs text-neutral-400">
+                {noPhotoNeeded
+                  ? "안 넣어도 자동으로 이미지가 만들어져요 · 여러 장 · GIF 가능"
+                  : "여러 장 · GIF 도 가능해요"}
+              </span>
+              <input
+                type="file"
+                accept="image/*,image/gif"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addFiles(e.target.files);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </label>
+          )}
           {pics.length > 0 && (
             <div className="grid grid-cols-4 gap-2">
               {pics.map((p, i) => (
@@ -489,6 +686,146 @@ export default function NewPostPage() {
             📥 사진만 저장 · 나중에 이 사진들로 글쓰기
           </button>
         )}
+
+        <div className="flex flex-col gap-2">
+          <span className={labelC}>
+            동영상 (선택){vids.length > 0 && ` · ${vids.length}개`}
+          </span>
+          <span className="-mt-1 text-xs text-neutral-400">
+            올린 구간을 잘라 GIF로 만들어 블로그 사진처럼 쓰고, 원본 영상은 나중에
+            클립(숏폼) 만들 때 그대로 활용해요. 최대 {VIDEO_MAX_COUNT}개 · 개당{" "}
+            {(VIDEO_MAX_BYTES / 1024 / 1024).toFixed(0)}MB.
+          </span>
+          {vids.length < VIDEO_MAX_COUNT && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-3 py-4 text-neutral-500 active:bg-neutral-100">
+              <span className="text-xl">🎬</span>
+              <span className="flex flex-col">
+                <span className="text-sm font-medium text-neutral-600">동영상 추가</span>
+                <span className="text-xs text-neutral-400">탭해서 선택</span>
+              </span>
+              <input
+                type="file"
+                accept="video/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addVideoFiles(e.target.files);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </label>
+          )}
+          {vids.map((v, i) => {
+            const dur = v.duration > 0 ? v.duration : Math.max(v.end, 30);
+            const startPct = (v.start / dur) * 100;
+            const endPct = (v.end / dur) * 100;
+            return (
+              <div key={i} className="flex flex-col gap-2 rounded-xl border border-neutral-300 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm text-neutral-700">{v.file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeVideo(i)}
+                    aria-label="동영상 삭제"
+                    className="shrink-0 rounded-full bg-neutral-900 px-2 py-1 text-xs leading-none text-white"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* 재생 영역은 그대로 두고(가리지 않음), 구간 조정 핸들은 그 아래
+                    별도 바에만 둔다. 네이티브 <video controls>는 iOS에서 재생 시
+                    전체화면으로 튀어나가서 제거하고, autoPlay+muted+playsInline로
+                    구간만 계속 반복 재생시킨다. */}
+                <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
+                  <video
+                    ref={(el) => {
+                      videoRefs.current[i] = el;
+                    }}
+                    src={v.url}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="h-full w-full object-contain"
+                    onTimeUpdate={(e) => {
+                      // 지정한 구간만 반복 재생 — 끝에 닿으면 시작으로 되돌린다.
+                      const el = e.currentTarget;
+                      if (el.currentTime >= v.end || el.currentTime < v.start) {
+                        el.currentTime = v.start;
+                      }
+                    }}
+                  />
+                </div>
+
+                <div
+                  ref={(el) => {
+                    trackRefs.current[i] = el;
+                  }}
+                  className="relative h-8 w-full touch-none select-none rounded-lg bg-neutral-200"
+                >
+                  <div
+                    className="pointer-events-none absolute inset-y-0 rounded-lg bg-neutral-900/80"
+                    style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
+                  />
+                  <div
+                    onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+                    onPointerMove={(e) => {
+                      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                      const t = clientXToTime(i, e.clientX, dur);
+                      const s = Math.min(t, v.end - 0.2);
+                      updateVideo(i, { start: Math.max(0, s) });
+                      seekVideo(i, Math.max(0, s));
+                    }}
+                    className="absolute inset-y-0 flex w-7 touch-none cursor-ew-resize items-center justify-center"
+                    style={{ left: `calc(${startPct}% - 14px)` }}
+                  >
+                    <div className="h-full w-1.5 rounded-full bg-white shadow" />
+                  </div>
+                  <div
+                    onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+                    onPointerMove={(e) => {
+                      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                      const t = clientXToTime(i, e.clientX, dur);
+                      const en = Math.max(t, v.start + 0.2);
+                      updateVideo(i, { end: Math.min(dur, en) });
+                      seekVideo(i, Math.min(dur, en));
+                    }}
+                    className="absolute inset-y-0 flex w-7 touch-none cursor-ew-resize items-center justify-center"
+                    style={{ left: `calc(${endPct}% - 14px)` }}
+                  >
+                    <div className="h-full w-1.5 rounded-full bg-white shadow" />
+                  </div>
+                </div>
+
+                <span className="text-xs text-neutral-500">
+                  구간 {v.start.toFixed(1)}초 ~ {v.end.toFixed(1)}초 (
+                  {(v.end - v.start).toFixed(1)}초)
+                  {v.duration ? ` · 전체 ${v.duration.toFixed(1)}초` : ""}
+                </span>
+
+                <label className="flex items-center gap-1.5 text-xs text-neutral-600">
+                  <input
+                    type="checkbox"
+                    checked={v.useGif}
+                    onChange={(e) => updateVideo(i, { useGif: e.target.checked })}
+                  />
+                  GIF로 만들어 본문에 쓰기(끄면 클립에도 못 써요)
+                </label>
+              </div>
+            );
+          })}
+        </div>
+
+        <label className="flex items-start gap-2 text-sm text-neutral-600">
+          <input type="checkbox" name="is_sponsored" className="mt-1" />
+          <span>
+            <strong className="font-medium">협찬/제공받은 글이에요</strong>
+            <span className="block text-xs text-neutral-500">
+              체크하면 본문에 아쉬운 점 없이 좋았던 점만 정리해서 써요. 가이드라인 첨부 여부와
+              무관하게 이 체크박스로만 판단해요.
+            </span>
+          </span>
+        </label>
 
         <div className="flex flex-col gap-2">
           <span className={labelC}>

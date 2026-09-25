@@ -188,6 +188,7 @@ def generate_post(
     benchmark_notes: str = "",
     revision_request: str = "",
     previous_body: str = "",
+    is_sponsored: bool = False,
 ):
     structure = get_structure(structure_key)
     required_links = [l.strip() for l in (required_links or []) if l.strip()]
@@ -272,6 +273,21 @@ def generate_post(
     else:
         guideline_rule = ""
 
+    # 협찬/제공 여부(폰 입력화면 체크박스) — 가이드라인 텍스트 첨부 여부와 무관하게 독립적으로
+    # 받는다. 2026-09-25: 처음엔 guideline 유무로 협찬을 판단했는데, 실제로는 memo만 넣고
+    # 가이드라인 없이 쓰는 협찬글이 많아(예: 베르블랑 아기세제) 그 신호가 안 맞았다 — 그래서
+    # 협찬 여부를 사용자가 직접 체크하는 별도 필드로 뺐다.
+    if is_sponsored:
+        sponsor_rule = (
+            "\n\n[협찬/제공 받은 글]\n"
+            "**'아쉬웠던 점/별로인 점'은 쓰지 마라.** 기본 구조에 '좋았던 점 / 아쉬웠던 점' "
+            "섹션이 있어도 이 글에서는 아쉬운 점 없이 좋았던 점만 정리하는 섹션으로 바꿔 써라"
+            "(소제목도 '좋았던 점'류로). 단점을 감추려고 거짓으로 칭찬하지 말고, 실제 장점 "
+            "중에서 진짜였던 것만 자연스럽게 정리하라.\n"
+        )
+    else:
+        sponsor_rule = ""
+
     # 웹 리서치로 확인한 사실 — 있으면 본문에 정확히 녹이도록 주입(정보 밀도↑, GPT 대비 약점 보완)
     if research_notes:
         research_rule = (
@@ -338,6 +354,7 @@ def generate_post(
         + "\n\n"
         + brand_rule
         + guideline_rule
+        + sponsor_rule
         + research_rule
         + benchmark_rule
         + revision_rule

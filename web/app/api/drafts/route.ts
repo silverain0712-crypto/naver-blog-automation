@@ -8,7 +8,9 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const all = await listDrafts();
-    const drafts = all.filter((d) => d.status !== "learn" && d.status !== "learn_done");
+    const drafts = all.filter(
+      (d) => d.status !== "learn" && d.status !== "learn_done" && d.status !== "idea",
+    );
     return NextResponse.json({ drafts });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
       blog_id: str("blog_id") || "bbnation",
       video_count: 0,
       video_desc: "",
+      is_sponsored: Boolean(b.isSponsored),
     };
 
     const photoCount = Math.max(0, Math.min(40, Number(b.photoCount) || 0));
@@ -58,6 +61,20 @@ export async function POST(req: NextRequest) {
       const path = `${draft_id}/${i}.${ext}`;
       uploads.push({ path, url: await createSignedUpload(path) });
       imagePaths.push(path);
+    }
+
+    // 동영상 — 블로그 본문용 GIF 추출(mac_clip_generator.py) + 클립 단계 원본 소스로 쓴다.
+    // 사진과 완전히 같은 서명 업로드 패턴, 최대 5개.
+    const videoCount = Math.max(0, Math.min(5, Number(b.videoCount) || 0));
+    const videoNames: string[] = Array.isArray(b.videoNames) ? b.videoNames.map(String) : [];
+    const videoUploads: { path: string; url: string }[] = [];
+    for (let i = 1; i <= videoCount; i++) {
+      const nm = videoNames[i - 1] || "";
+      const vext = nm.includes(".")
+        ? nm.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "")
+        : "mp4";
+      const path = `${draft_id}/video_${i}.${vext || "mp4"}`;
+      videoUploads.push({ path, url: await createSignedUpload(path) });
     }
 
     // 협찬 가이드 · 제품 설명서 — 파일 여러 개(xlsx/pdf/docx/이미지 등) + 직접 붙여넣은 텍스트.
@@ -84,7 +101,7 @@ export async function POST(req: NextRequest) {
     // 상품 링크로 상세컷도 만들지 여부. 맥 생성기가 data.image_job 을 보고 처리한다.
     const wantShots = Boolean(b.generateShots) && Boolean(request.product_link);
 
-    const needUpload = photoCount > 0 || guidelineUploads.length > 0;
+    const needUpload = photoCount > 0 || guidelineUploads.length > 0 || videoCount > 0;
     await insertDraft({
       id: draft_id,
       status: needUpload ? "uploading" : "generating",
@@ -100,6 +117,7 @@ export async function POST(req: NextRequest) {
           guideline_path: guideline_paths[0] ?? "",
           guideline_name: guidelineNames[0] ?? "",
         },
+        videos: [],
         ...(wantShots
           ? { image_job: { status: "requested", count: 3, feedback: "", error: "" } }
           : {}),
@@ -108,7 +126,7 @@ export async function POST(req: NextRequest) {
       thumbnail: null,
     });
 
-    return NextResponse.json({ id: draft_id, uploads, guidelineUploads });
+    return NextResponse.json({ id: draft_id, uploads, guidelineUploads, videoUploads });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
