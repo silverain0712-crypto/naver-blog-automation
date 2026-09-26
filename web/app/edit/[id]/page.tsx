@@ -7,10 +7,11 @@ import {
   STATUS_LABEL,
   POST_TYPES,
   POST_LENGTHS,
-  PHOTO_STYLES,
 } from "@/lib/constants";
 import ThumbnailBuilder from "./ThumbnailBuilder";
 import ProductShots from "./ProductShots";
+import CardImages from "./CardImages";
+import ClipBuilder from "./ClipBuilder";
 
 type Draft = {
   id: string;
@@ -30,6 +31,9 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const [saving, setSaving] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [stashUrls, setStashUrls] = useState<string[]>([]); // 보관 사진 미리보기 URL
+  const [guidelineFiles, setGuidelineFiles] = useState<
+    { name: string; url: string; ok: boolean }[] | null
+  >(null); // 첨부한 협찬 가이드 파일이 실제로 스토리지에 있는지 확인용
   const [revisionReq, setRevisionReq] = useState(""); // 초안 확인 후 수정 요청
   const [regenMemo, setRegenMemo] = useState(""); // 처음부터 다시쓰기용 메모
   const editedRef = useRef(false); // 사용자가 편집을 시작하면 폴링이 덮어쓰지 않게
@@ -84,6 +88,25 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       stop = true;
     };
   }, [draft?.status, id]);
+
+  // 협찬 가이드 파일을 첨부한 글이면, 실제로 업로드가 됐는지 확인용 목록을 받아온다.
+  useEffect(() => {
+    const names = (draft?.data as Record<string, any> | null)?.request?.guideline_names;
+    if (!draft || !Array.isArray(names) || names.length === 0) {
+      setGuidelineFiles(null);
+      return;
+    }
+    let stop = false;
+    fetch(`/api/drafts/${id}/guideline`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then(({ files }) => {
+        if (!stop) setGuidelineFiles(files ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [draft, id]);
 
   async function save(queue: boolean) {
     setSaving(true);
@@ -187,7 +210,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       structure_key: str("structure_key") || (prev.structure_key as string) || "restaurant",
       keyword: str("keyword"),
       length: parseInt(str("length") || String(prev.length ?? 1500), 10) || 1500,
-      photo_style: str("photo_style") || (prev.photo_style as string) || "감성 중심",
+      photo_style: (prev.photo_style as string) || "감성 중심",
       memo: str("memo"),
     };
     setSaving(true);
@@ -263,6 +286,15 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
             <>문체 학습 + 사진 분석 + 본문 작성. 보통 20~40초 걸려요.<br />맥이 깨어 있어야 진행됩니다.</>
           )}
         </p>
+        {d.image_job && (
+          <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            {d.image_job.status === "done"
+              ? "🖼 상품 사진도 준비됐어요 — 글이 완성되면 같이 보여드려요."
+              : d.image_job.status === "error"
+                ? `🖼 상품 사진 생성 실패: ${String(d.image_job.error ?? "").slice(0, 60)}`
+                : "🖼 상품 상세컷 3장도 같이 만들고 있어요…"}
+          </p>
+        )}
         <Link href="/list" className="text-sm text-blue-600">
           목록으로
         </Link>
@@ -369,20 +401,6 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1">
-              <span className={labelC}>사진 노출</span>
-              <select
-                name="photo_style"
-                className={fieldC}
-                defaultValue={r.photo_style || "감성 중심"}
-              >
-                {PHOTO_STYLES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
 
           <label className="flex flex-col gap-1">
@@ -429,7 +447,27 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         </span>
       </header>
 
-      {guidelineName && (
+      {guidelineFiles && guidelineFiles.length > 0 && (
+        <div className="mb-2 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700">
+          <p className="font-medium">📋 첨부한 협찬 가이드 파일</p>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {guidelineFiles.map((f, i) => (
+              <li key={i}>
+                {f.ok ? (
+                  <a href={f.url} target="_blank" rel="noreferrer" className="underline">
+                    ✅ {f.name}
+                  </a>
+                ) : (
+                  <span className="text-red-600">
+                    ❌ {f.name} — 업로드가 안 됐어요. 다시 첨부해주세요.
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!guidelineFiles && guidelineName && (
         <p className="mb-2 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700">
           📋 협찬 가이드 반영됨: {guidelineName}
         </p>
@@ -541,10 +579,13 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         draftId={draft.id}
         images={draft.images ?? []}
         candidates={thumbCandidates}
+        hashtags={hashtags}
         getBody={() => body}
         getData={() => draft.data ?? {}}
         onApplied={onThumbApplied}
       />
+
+      <CardImages id={id} />
 
       <ProductShots
         id={id}
@@ -553,6 +594,8 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         )}
         onSaveLink={saveProductLink}
       />
+
+      <ClipBuilder id={id} />
 
       <div className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
         <p className="mb-1 text-sm font-medium text-neutral-700">✏️ 수정 요청</p>

@@ -1,5 +1,7 @@
 """Claude 호출 공통 헬퍼: 클라이언트 생성, 이미지 전처리, 구조화 JSON 호출."""
 
+from __future__ import annotations
+
 import base64
 import io
 import json
@@ -58,10 +60,21 @@ def prepare_image_block(image_bytes: bytes) -> dict:
     }
 
 
+def cached_system_block(text: str) -> list:
+    """system 프롬프트 문자열을 캐시 가능한 content block 리스트로 감싼다.
+
+    2026-09-26: 여러 호출이 완전히 같은 system 문자열을 반복해서 쓰는 자리
+    (예: naeo_audit.densify 가 post_generator._expand_body 직후 같은 edit_system 을
+    재사용하는 경우)에 붙이면, 두 번째 호출부터 해당 구간이 캐시로 처리돼(~90% 할인)
+    같은 내용을 매번 전액 과금하던 낭비를 줄인다. call_json 의 system 인자는 문자열이든
+    이 블록 리스트든 그대로 SDK 에 전달되므로 호출부만 이 헬퍼로 감싸면 된다."""
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
 def call_json(
     *,
     model: str,
-    system: str,
+    system: str | list,
     content: list,
     schema: dict,
     max_tokens: int = 16000,

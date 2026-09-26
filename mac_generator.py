@@ -417,9 +417,23 @@ def generate(row: dict) -> None:
 
     # 협찬 가이드 · 제품 설명서 — 파일 여러 개(있으면) + 폰에서 직접 붙여넣은 텍스트를
     # 하나로 합쳐 생성 프롬프트에 주입한다.
-    guideline_text = _collect_guideline(req)
-    if guideline_text:
-        print(f"  📋 가이드/설명서 반영: {len(guideline_text)}자")
+    # 캐시(2026-09-26): 이미지 가이드 파일은 Claude 비전으로 파싱하는데(guideline_parser),
+    # 수정 요청/처음부터 다시쓰기로 재생성할 때마다 같은 파일을 매번 다시 파싱하고 있었다
+    # (사진 분석과 같은 낭비). 첨부 파일·텍스트 구성이 그대로면 캐시를 재사용한다.
+    guideline_cache = data0.get("_guideline_cache") or {}
+    guideline_cache_key = {
+        "paths": req.get("guideline_paths") or ([req["guideline_path"]] if req.get("guideline_path") else []),
+        "names": req.get("guideline_names") or [],
+        "text": req.get("guideline_text") or "",
+    }
+    if guideline_cache.get("key") == guideline_cache_key and guideline_cache.get("result") is not None:
+        guideline_text = guideline_cache["result"]
+        if guideline_text:
+            print(f"  📋 가이드/설명서 반영(캐시): {len(guideline_text)}자 — 파싱 재사용")
+    else:
+        guideline_text = _collect_guideline(req)
+        if guideline_text:
+            print(f"  📋 가이드/설명서 반영: {len(guideline_text)}자")
 
     # 웹 검색으로 사실 보강(자동 — 모델이 필요할 때만 검색). 실패해도 생성은 계속.
     # 수정 재생성이면 이미 반영돼 있으므로 건너뛴다(빠르게 요청만 반영).
@@ -444,7 +458,20 @@ def generate(row: dict) -> None:
 
     # app.py 와 동일 순서: 문체 가이드 → 사진 분석 → 초안 생성
     style_guide = style_profiler.load_style_guide()
-    analysis = image_analyzer.analyze_images(images, structure_key, photo_style)
+
+    # 사진 분석 캐시 — 수정 요청/처음부터 다시쓰기로 재생성할 때 사진이 그대로면
+    # 비전 분석을 다시 돌리지 않는다(2026-09-26: 이 재생성 재호출이 리서치·벤치마킹처럼
+    # 건너뛰어지지 않고 매번 새로 비전 API를 태워 비용 낭비였던 걸 확인). 사진 목록이나
+    # 글 유형/사진 노출 방식이 바뀌면(=분석 결과가 달라질 수 있으면) 캐시를 버리고 다시 돈다.
+    image_paths = row.get("images") or []
+    cache = data0.get("_image_analysis_cache") or {}
+    cache_key = {"images": image_paths, "structure_key": structure_key, "photo_style": photo_style}
+    if cache.get("key") == cache_key and cache.get("analysis") is not None:
+        analysis = cache["analysis"]
+        if images:
+            print(f"  🖼 사진 분석 재사용(캐시): {len(images)}장 — 사진 변경 없어 비전 분석 건너뜀")
+    else:
+        analysis = image_analyzer.analyze_images(images, structure_key, photo_style)
     post = post_generator.generate_post(
         structure_key=structure_key,
         keyword=req.get("keyword", ""),
@@ -496,6 +523,8 @@ def generate(row: dict) -> None:
         "captions": _captions_from_placement(post.get("photo_placement", [])),
         "font": DEFAULT_FONT,
         "size": DEFAULT_SIZE,
+        "_image_analysis_cache": {"key": cache_key, "analysis": analysis},
+        "_guideline_cache": {"key": guideline_cache_key, "result": guideline_text},
     }
     # 상품 사진 관련 필드는 재생성 때 새 data 에 안 담겨 사라지면 안 되므로 이어받는다
     # (handle_shot_requests 가 같은 폴링 루프에서 방금 채웠을 수도, 예전부터 있을 수도 있다).

@@ -75,13 +75,17 @@ def _from_docx(data: bytes) -> str:
 
 
 def _from_image(data: bytes) -> str:
-    """이미지 가이드는 Claude 비전으로 지시사항을 텍스트로 옮긴다."""
+    """이미지 가이드는 Claude 비전으로 지시사항을 텍스트로 옮긴다.
+
+    2026-09-26: 단순 전사(OCR) 작업인데 본문 작성용 Opus(WRITER_MODEL)를 쓰고 있던 걸
+    확인해 Sonnet(VISION_MODEL)으로 낮췄다 — 사진 분석 등 다른 비전 작업과 동급 작업이라
+    Opus까지 필요 없다."""
     import config
     from modules.llm import get_client, prepare_image_block
 
     client = get_client()
     resp = client.messages.create(
-        model=config.WRITER_MODEL,
+        model=config.VISION_MODEL,
         max_tokens=2000,
         system=(
             "너는 협찬 가이드라인 이미지를 읽어 그 안의 모든 지시사항을 한국어로 빠짐없이 옮겨 적는다. "

@@ -156,13 +156,18 @@ def profile_to_prompt(guide: dict) -> str:
         f"- 소제목 스타일: {p.get('subheading_style','')}\n"
         f"- 자주 쓰는 표현: {exprs}\n"
         f"- 이모티콘/특수표현: {p.get('emoji_usage','')}\n"
-        f"- 종합: {p.get('summary','')}"
+        f"- 종합: {p.get('summary','')}\n\n"
+        "(주의: 위 '문장 스타일'의 종결어미 목록은 과거 글(전부 해요체) 기준 관찰이다. "
+        "정보·수치·절차 문장의 어미는 이걸 따르지 말고 naeo_rules.py [2]의 습니다체 "
+        "혼합 실험 규칙을 우선하라 — 나머지 어투·표현·이모티콘은 그대로 따른다.)"
     )
     example = (guide.get("recent_example") or "").strip()
     if example:
         out += (
             "\n\n[가장 최근 발행 글 예시 — 이 톤·호흡·줄바꿈, 그리고 이 정도 분량·"
-            "소제목 개수를 그대로 따라해라]\n"
+            "소제목 개수를 그대로 따라해라. 단 이 예시는 습니다체 혼합 실험 이전 글이라 "
+            "전부 해요체다 — 종결어미까지 그대로 베끼지 말고, 정보·수치 문장은 위 주의사항대로 "
+            "습니다체로 바꿔 써라]\n"
             "```\n" + example[:2600] + "\n```"
         )
     return out

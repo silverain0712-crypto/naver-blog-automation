@@ -13,7 +13,7 @@ import re
 import config
 from modules import naeo_audit
 from modules.image_analyzer import analysis_summary_for_writer
-from modules.llm import call_json
+from modules.llm import call_json, cached_system_block
 from modules.style_profiler import profile_to_prompt
 from prompts.post_structures import get_structure
 from prompts.style_rules import STYLE_RULES
@@ -121,7 +121,7 @@ def _content_len(body: str) -> int:
     return len("".join(t.split()))
 
 
-def _expand_body(system: str, current_body: str, target: int, actual: int) -> str:
+def _expand_body(system: str | list, current_body: str, target: int, actual: int) -> str:
     """짧게 나온 본문을 목표 글자수 이상으로 늘린다(주제·사실·사진배치 유지)."""
     instruction = (
         f"아래는 네가 방금 쓴 블로그 초안 본문이다. 현재 공백 제외 약 {actual}자로 "
@@ -337,7 +337,11 @@ def generate_post(
     else:
         revision_rule = ""
 
-    system = (
+    # 캐싱용 분리(2026-09-26): 아래 _stable_prefix 는 문체 프로파일이 재분석되기 전까지
+    # 글 유형·글감과 무관하게 모든 호출에서 완전히 동일하다(2만자 안팎). cache_control 로
+    # 감싸 두 번째 호출부터 캐시 처리되게 한다 — 리서치/벤치마킹/가이드라인처럼 글마다
+    # 달라지는 뒷부분은 그대로 매번 새로 보낸다(캐시 대상이 아니다).
+    _stable_prefix = (
         STYLE_RULES
         + "\n\n"
         + SAFETY_RULES
@@ -349,6 +353,9 @@ def generate_post(
         + NAEO_RULES
         + "\n\n"
         + profile_to_prompt(style_guide)
+    )
+    system_str = (
+        _stable_prefix
         + "\n\n"
         + structure.get("top_expo_rules", "")
         + "\n\n"
@@ -429,6 +436,10 @@ def generate_post(
         "- confirm_needed: 사진/메모로 확정할 수 없어 사용자 검수가 필요한 항목"
         "(가격, 위치, 주차, 협찬 문구, 링크 등). 없으면 빈 배열."
     )
+    system = [
+        {"type": "text", "text": _stable_prefix, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": system_str[len(_stable_prefix):]},
+    ]
 
     section_list = "\n".join(f"{i+1}. {s}" for i, s in enumerate(structure["sections"]))
     photo_summary = analysis_summary_for_writer(image_analysis)
@@ -470,7 +481,12 @@ def generate_post(
     # 2026-09-20: 이 전체 system(2만자+)을 그대로 재사용해 매번 다시 보내던 걸 확인해
     # 문체·안전 규칙만 남긴 경량 버전으로 분리했다 — Opus로 한 번 더 쓰는 게 아니라
     # Sonnet 보정이라 비용 영향이 크다.
-    edit_system = STYLE_RULES + "\n\n" + SAFETY_RULES + "\n\n" + profile_to_prompt(style_guide)
+    # 2026-09-26: _expand_body 와 naeo_audit.densify 가 이 문자열을 완전히 그대로(같은
+    # Sonnet 모델로) 두 번 보낸다 — cache_control 로 감싸 두 번째 호출부터 캐시로
+    # 처리되게 한다(프롬프트 캐싱은 모델별로 별도 적용되므로 같은 모델일 때만 재사용된다).
+    edit_system = cached_system_block(
+        STYLE_RULES + "\n\n" + SAFETY_RULES + "\n\n" + profile_to_prompt(style_guide)
+    )
 
     # 목표 길이(공백 제외) 미달이면 1회만 본문을 늘려 채운다(폰 즉시성 우선).
     # 과거 최대 3회 → Opus 대용량 호출이 최대 3연타로 붙어 수 분 지연되던 것을 축소.

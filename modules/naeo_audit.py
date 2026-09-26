@@ -51,6 +51,9 @@ _BOUNDARY_HINTS = ("진료를 받", "병원에 가", "병원을 방문", "전문
 
 _SUBHEADING_MIN = 3
 _SUBHEADING_MAX = 6
+# v5(2026-09-26): NAEO 실측 — 인용 상위 글은 인용구를 도입부 1개로 안 끝내고
+# 섹션마다 흩어 2~4개 쓴다. 최소 기준만 여기서 강제하고(2개), 상한은 프롬프트에만 둔다.
+_QUOTE_MIN = 2
 
 
 def _strip_markers(body: str) -> str:
@@ -97,7 +100,8 @@ def audit(post: dict, *, length: int = 0) -> dict:
     sents = sentences(body)
     numeric = [s for s in sents if _DIGIT_RE.search(s)]
     has_table = "[표]" in body and "[/표]" in body
-    has_quote = "[인용]" in body and "[/인용]" in body
+    quote_count = body.count("[인용]")
+    has_quote = quote_count > 0 and "[/인용]" in body
     consult = is_consult(body)
     has_source = any(h in body for h in _SOURCE_HINTS)
     has_boundary = any(h in body for h in _BOUNDARY_HINTS)
@@ -116,6 +120,11 @@ def audit(post: dict, *, length: int = 0) -> dict:
         issues.append("표 없음 — 조건·비교·가격·시간 중 하나를 [표]로 넣어야 한다")
     if not has_quote:
         issues.append("인용구 없음 — 서론 직후 핵심 결론 선요약을 [인용]으로 넣어야 한다")
+    elif quote_count < _QUOTE_MIN:
+        issues.append(
+            f"인용구 {quote_count}개(목표 {_QUOTE_MIN}개 이상) — 도입부 1개 말고 "
+            "본문 섹션마다 하나씩 더 흩어 넣어야 한다(v5, naeo.kr 실측)"
+        )
     if ratio < target:
         issues.append(
             f"숫자 문장 비율 {ratio:.0%} (목표 {target:.0%}) — "
@@ -154,6 +163,7 @@ def audit(post: dict, *, length: int = 0) -> dict:
         "numeric_target": target,
         "has_table": has_table,
         "has_quote": has_quote,
+        "quote_count": quote_count,
         "subheading_count": len(subs),
         "titles_with_number": len(titles) - len(titles_without_number),
         "issues": issues,
@@ -170,7 +180,7 @@ _DENSIFY_SCHEMA = {
 
 def densify(
     *,
-    system: str,
+    system: str | list,
     body: str,
     issues: list[str],
     sources: str,
