@@ -12,6 +12,35 @@ import {
 const field = "rounded-lg border border-neutral-300 px-3 py-2 text-base w-full bg-white";
 const labelC = "text-sm font-medium text-neutral-700";
 
+// 네트워크 재시도 헬퍼(동영상 업로드 전용, 2026-09-27). 동영상은 사진보다 용량이 훨씬
+// 커서(수십 MB) 업로드 도중 네트워크가 잠깐 끊기면 그대로 실패해 글이 '업로드 중'에
+// 영원히 멈췄다(실측: 소고기무국 글 하나가 동영상 3개·46MB에서 5번 다 여기서 멈춤).
+// 지수 백오프로 몇 번 더 시도해 일시적 끊김을 흡수한다. 단, 앱이 완전히 백그라운드로
+// 넘어가 JS 실행 자체가 멈춘 경우는 재시도로도 못 살린다 — 업로드 중엔 화면을 켜두는
+// 게 여전히 가장 확실하다.
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  onRetry?: (attempt: number, maxAttempts: number) => void,
+  maxAttempts = 4,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      lastErr = new Error(`요청 실패 (${res.status})`);
+    } catch (e) {
+      lastErr = e;
+    }
+    if (attempt < maxAttempts) {
+      onRetry?.(attempt, maxAttempts);
+      await new Promise((r) => setTimeout(r, 1500 * attempt)); // 1.5s, 3s, 4.5s ...
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 // 이미지를 디코드해 {width,height,draw} 로 반환.
 // createImageBitmap(HEIC 실패 가능) → <img> 폴백(Safari 는 HEIC 도 네이티브 디코드).
 type Decoded = {
@@ -380,16 +409,23 @@ export default function NewPostPage() {
     }
 
     // 동영상 업로드(원본 그대로) → 완료되면 트림 구간 포함 메타를 확정 저장.
+    // 용량이 커서(수십 MB) 일시적 네트워크 끊김에 취약 — PUT/PATCH 둘 다 재시도한다.
     if (videoUploads.length > 0) {
       for (let i = 0; i < videoUploads.length; i++) {
-        setProgress(`동영상 업로드 ${i + 1}/${videoUploads.length}`);
         const v = vids[i];
-        const put = await fetch(videoUploads[i].url, {
-          method: "PUT",
-          headers: { "content-type": v.file.type || "video/mp4" },
-          body: v.file,
+        setProgress(`동영상 업로드 ${i + 1}/${videoUploads.length}`);
+        await fetchWithRetry(
+          videoUploads[i].url,
+          {
+            method: "PUT",
+            headers: { "content-type": v.file.type || "video/mp4" },
+            body: v.file,
+          },
+          (attempt, max) =>
+            setProgress(`동영상 업로드 ${i + 1}/${videoUploads.length} 재시도 중… (${attempt}/${max})`),
+        ).catch(() => {
+          throw new Error(`동영상 ${i + 1} 업로드 실패 — 네트워크를 확인하고 다시 시도해주세요.`);
         });
-        if (!put.ok) throw new Error(`동영상 ${i + 1} 업로드 실패 (${put.status})`);
       }
       const videoMeta = videoUploads.map((u, i) => ({
         path: u.path,
@@ -399,10 +435,17 @@ export default function NewPostPage() {
         end: vids[i].end,
         gif_photo_number: null as number | null,
       }));
-      await fetch(`/api/drafts/${id}/videos`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videos: videoMeta }),
+      setProgress("동영상 정보 저장 중…");
+      await fetchWithRetry(
+        `/api/drafts/${id}/videos`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videos: videoMeta }),
+        },
+        (attempt, max) => setProgress(`동영상 정보 저장 재시도 중… (${attempt}/${max})`),
+      ).catch(() => {
+        throw new Error("동영상 정보 저장 실패 — 네트워크를 확인하고 다시 시도해주세요.");
       });
     }
     return id;
