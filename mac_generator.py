@@ -42,14 +42,12 @@ def _download_images(row: dict) -> list[bytes]:
 
 
 def _captions_from_placement(photo_placement: list[dict]) -> dict:
-    """photo_placement → {사진번호(str): 캡션} (worker 가 쓰는 captions 형태)."""
-    caps: dict[str, str] = {}
-    for p in photo_placement or []:
-        num = p.get("photo_number")
-        cap = (p.get("caption") or "").strip()
-        if num is not None and cap:
-            caps[str(num)] = cap
-    return caps
+    """photo_placement → {사진번호(str): 캡션} (worker 가 쓰는 captions 형태).
+
+    2026-09-27: 유저 요청으로 사진 밑 설명 문구를 생략한다. post_generator 프롬프트에도
+    caption 을 비우라고 지시했지만, 모델이 혹시 채워도 여기서 확실히 걸러 워커에 전달되지
+    않게 한다(빈 dict 고정)."""
+    return {}
 
 
 def _intro_boundary(lines: list[str]) -> int:

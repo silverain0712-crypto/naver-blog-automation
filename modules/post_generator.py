@@ -44,7 +44,7 @@ _POST_SCHEMA = {
                 "properties": {
                     "photo_number": {"type": "integer"},
                     "section": {"type": "string"},
-                    "caption": {"type": "string"},
+                    "caption": {"type": "string"},  # 2026-09-27: 항상 빈 문자열("")로 둔다(캡션 생략)
                 },
                 "required": ["photo_number", "section", "caption"],
                 "additionalProperties": False,
@@ -432,7 +432,9 @@ def generate_post(
         "결론을 새로 압축해서 써라. 마크다운 '>' 는 쓰지 마라(네이버에서 꺾쇠 글자로 찍힌다). 예:\n"
         "[인용]119,000원짜리 이케아 둑티그는 조립에 1시간 30분 걸렸지만, 16개월 뽀식이가 "
         "매일 아침 먼저 달려가는 장난감이 됐어요.[/인용]\n"
-        "- photo_placement / video_placement: 각 사진·영상의 섹션과 캡션/설명.\n"
+        "- photo_placement: 각 사진의 섹션만 정하고 caption 은 항상 빈 문자열(\"\")로 둬라"
+        "(2026-09-27: 사진 밑에 설명 문구를 달지 않는다 — 유저가 직접 검토하며 필요하면 넣는다).\n"
+        "- video_placement: 각 영상의 섹션과 짧은 설명(note).\n"
         "- confirm_needed: 사진/메모로 확정할 수 없어 사용자 검수가 필요한 항목"
         "(가격, 위치, 주차, 협찬 문구, 링크 등). 없으면 빈 배열."
     )
