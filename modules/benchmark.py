@@ -14,6 +14,7 @@ researcher(사실 보강)와는 역할이 다르다:
 from __future__ import annotations
 
 import config
+from modules.freshness import freshness_rule
 from modules.llm import get_client, _RETRYABLE
 
 _SKIP_MARK = "벤치마킹 불필요"
@@ -71,7 +72,7 @@ def benchmark(*, keyword: str, memo: str, structure_label: str = "", guideline: 
             resp = client.messages.create(
                 model=config.BENCHMARK_MODEL,
                 max_tokens=2000,
-                system=_SYSTEM,
+                system=_SYSTEM + "\n\n" + freshness_rule(),
                 messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
                 tools=tools,
             )

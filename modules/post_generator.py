@@ -12,6 +12,7 @@ import re
 
 import config
 from modules import naeo_audit
+from modules.freshness import freshness_rule
 from modules.image_analyzer import analysis_summary_for_writer
 from modules.llm import call_json, cached_system_block
 from modules.style_profiler import profile_to_prompt
@@ -296,6 +297,9 @@ def generate_post(
             "본문의 알맞은 섹션에 자연스럽게 녹여라(절차·준비물·수치·공식 창구 등). "
             "단 (1) 여기 없는 사실을 지어내지 말고, (2) 비비의 실경험 톤으로 풀되 정보 자체는 정확히, "
             "(3) 개인 경험(메모)과 충돌하면 메모를 우선하고 일반 정보는 '보통은/일반적으로' 로 구분해 써라.\n"
+            "**장소 방문 후기의 매장 위치·영업시간·주차 정보 블록은 이 리서치 결과에 있으면 반드시 "
+            "채워 넣어라** — 사진/메모에 없다고 바로 확인 필요로 비우지 말고, 이 [웹 리서치로 확인한 "
+            "사실]에 해당 정보가 있는지 먼저 확인하고 써라. 리서치에도 정말 없을 때만 확인 필요로 남겨라.\n"
             + research_notes
         )
     else:
@@ -362,6 +366,10 @@ def generate_post(
         + brand_rule
         + guideline_rule
         + sponsor_rule
+        + "\n\n" + freshness_rule()
+        + "- 본문의 가격·연도·기간 등 시점 의존 수치는 [웹 리서치로 확인한 사실]에 있는 값만 쓴다. "
+        "리서치에 없으면 기억으로 채우지 말고 '정확한 금액은 방문 전 확인'처럼 처리하라. "
+        "제목·본문의 연도 표기는 위 오늘 날짜 기준으로 맞춰라.\n"
         + research_rule
         + benchmark_rule
         + revision_rule
