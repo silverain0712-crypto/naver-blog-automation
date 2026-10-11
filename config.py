@@ -38,19 +38,19 @@ NAVER_CHROME_PROFILE = os.path.expanduser(os.getenv("NAVER_CHROME_PROFILE", "").
 
 # --- 모델 ID --------------------------------------------------------------
 # 사진 분석: 장수가 많아 비용 효율적인 Sonnet, 글 작성: 문체 품질이 중요해 Opus.
-VISION_MODEL = "claude-sonnet-4-6"
-WRITER_MODEL = "claude-opus-4-8"
+VISION_MODEL = "claude-sonnet-5-5"
+WRITER_MODEL = "claude-opus-5-5"
 # 사실 보강 리서치(웹 검색): 비용 효율적인 Sonnet. 웹검색 서버툴을 이 모델로 돌린다.
-RESEARCH_MODEL = "claude-sonnet-4-6"
+RESEARCH_MODEL = "claude-sonnet-5-5"
 # 웹 검색 사실 보강 기능 on/off (끄면 리서치 단계 건너뜀). env 로 덮어쓸 수 있다.
 ENABLE_RESEARCH = os.getenv("ENABLE_RESEARCH", "1").strip() not in ("0", "false", "False", "")
 # 상위노출 벤치마킹(웹 검색으로 경쟁 상위글 구조 분석): 리서처와 같은 Sonnet.
-BENCHMARK_MODEL = "claude-sonnet-4-6"
+BENCHMARK_MODEL = "claude-sonnet-5-5"
 # 벤치마킹 기능 on/off (끄면 벤치마킹 단계 건너뜀). env 로 덮어쓸 수 있다.
 ENABLE_BENCHMARK = os.getenv("ENABLE_BENCHMARK", "1").strip() not in ("0", "false", "False", "")
 # NAEO 인용 조건 검수 + 밀도 보정(modules/naeo_audit.py). 초안을 세어보고 미달이면 1회 고쳐 쓴다.
 # 보정은 창작이 아니라 '이미 있는 수치로 문장 고쳐쓰기'라 Opus까지 필요 없다 → Sonnet.
-NAEO_AUDIT_MODEL = "claude-sonnet-4-6"
+NAEO_AUDIT_MODEL = "claude-sonnet-5-5"
 ENABLE_NAEO_AUDIT = os.getenv("ENABLE_NAEO_AUDIT", "1").strip() not in ("0", "false", "False", "")
 # 네이버 사진 배치 방식. 기본 0(결정적): 마커 교체 안 하고 [사진N] 글자 마커를 자리 안내로
 # 남긴 뒤 모든 사진을 순서대로 글 끝에 모아 사용자가 드래그. 1이면 best-effort 인라인 시도
@@ -68,7 +68,7 @@ HIGGSFIELD_MODEL = "higgsfield-ai/soul/v2/standard"  # 카드뉴스 배경 이�
 
 # --- 숏폼(원소스 멀티유즈) ------------------------------------------------
 # 발행 글 → 숏폼 대본. 연출 판단이라 문체 모델(Opus)까지는 필요 없고 Sonnet 이면 충분하다.
-SHORTFORM_MODEL = "claude-sonnet-4-6"
+SHORTFORM_MODEL = "claude-sonnet-5-5"
 # 사진 → 영상 변환 엔진. Veo 는 출력 '초당' 과금이라 등급 차이가 그대로 비용이다
 # (2026-08 기준 720p: lite $0.05/s, fast $0.10/s, standard $0.40/s).
 # 전 컷을 움직이지 않고 motion_worth=high 인 컷만 변환한다(modules/shortform.py).
