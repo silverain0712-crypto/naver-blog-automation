@@ -99,7 +99,17 @@ def call_json(
             ) as stream:
                 final = stream.get_final_message()
             text = next((b.text for b in final.content if b.type == "text"), "")
-            return json.loads(text)
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                # 응답이 중간에 끊긴 경우(실측 2026-10-22: 몽디에스 핸드워시 글이 max_tokens 한참 전인
+                # 636~5809자에서 잘림). 원인을 알 수 있게 stop_reason 을 로그에 남기고 1회 재시도.
+                print(f"  ⚠️ JSON 응답 잘림: stop_reason={final.stop_reason}, "
+                      f"출력 토큰={final.usage.output_tokens}, 길이={len(text)}자")
+                last = RuntimeError(
+                    f"모델 응답이 중간에 끊겼어요(stop_reason={final.stop_reason}): {e}")
+                if attempt < 1:
+                    continue
         except _RETRYABLE as e:
             last = e
             if attempt < 1:
