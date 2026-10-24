@@ -507,10 +507,16 @@ export default function NewPostPage() {
       // 업로드가 있었으면 생성 시작 상태로 전환(사진/가이드/영상 없으면 POST 가 이미 generating).
       if (meta.photoCount || guideFiles.length > 0 || vids.length > 0) {
         setProgress("초안 생성 준비 중…");
-        await fetch(`/api/drafts/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "generating" }),
+        await fetchWithRetry(
+          `/api/drafts/${id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "generating" }),
+          },
+          (attempt, max) => setProgress(`초안 생성 준비 재시도 중… (${attempt}/${max})`),
+        ).catch(() => {
+          throw new Error("초안 생성 시작 요청 실패 — 네트워크를 확인하고 다시 시도해주세요.");
         });
       }
       // 글감 메모에서 시작한 글이면, 실제로 써지기 시작했으니 메모는 지운다.
