@@ -15,12 +15,22 @@ from __future__ import annotations
 import re
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 _TIMEOUT = 30000
+
+# 실측(2026-09-03): 번들 Chromium(headless) 은 물론 실제 Chrome 을 headless=True 로
+# 띄워도 naver.me/브랜드커넥트/스마트스토어가 봇으로 판정해 "상품이 존재하지 않습니다"
+# 데코이나 무한 대기로 막는다. 반면 실제 Chrome 을 headless=False(화면 렌더링 O)로,
+# 자동화 플래그(navigator.webdriver 등)를 감춰 띄우면 사용자의 PC 브라우저와 똑같이
+# 통과한다 — "PC 로는 되는데 자동화는 안 되는" 원인이 바로 이 headless 감지였다.
+# 창을 화면 밖(4000,4000)으로 띄워 실제로는 안 보이게 한다(로그인 프로필과는 분리된
+# 전용 프로필 — 발행 워커의 USERDATA_DIR 과 충돌하지 않는다).
+_PROBE_PROFILE_DIR = Path.home() / ".naver_blog_automation" / "product_probe_profile"
 
 class ProductPageError(RuntimeError):
     """상품 페이지 자체가 없거나 열리지 않을 때(삭제·품절·오류 페이지)."""
@@ -170,12 +180,24 @@ def _prices(page) -> tuple[str, str]:
 
 
 def fetch(url: str, headless: bool = True, log=None) -> Product:
-    """상품 링크를 실제 브라우저로 열어 정보를 긁는다."""
+    """상품 링크를 실제 브라우저로 열어 정보를 긁는다.
+
+    headless 인자는 하위호환용으로 남겨뒀지만 무시한다 — 실측상 headless 로는
+    네이버 봇 판정을 통과 못 해 항상 headed(화면 밖으로 숨김)로 띄운다.
+    """
     say = log or (lambda m: None)
     p = Product()
+    _PROBE_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
-        ctx = browser.new_context(
+        ctx = pw.chromium.launch_persistent_context(
+            str(_PROBE_PROFILE_DIR),
+            channel="chrome",
+            headless=False,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--window-position=4000,4000",
+                "--window-size=1440,1600",
+            ],
             user_agent=_UA,
             viewport={"width": 1440, "height": 1600},
             locale="ko-KR",
@@ -236,7 +258,6 @@ def fetch(url: str, headless: bool = True, log=None) -> Product:
             say(f"  상품: {p.name[:50]} / 사진 {len(p.images)}장")
         finally:
             ctx.close()
-            browser.close()
     return p
 
 

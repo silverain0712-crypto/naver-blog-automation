@@ -24,6 +24,7 @@ export default function ProductShots({ id, productLink, onSaveLink }: Props) {
   const [linkSaving, setLinkSaving] = useState(false);
   const [linkMsg, setLinkMsg] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const autoOpened = useRef(false);
 
   // 부모가 저장한 새 링크로 동기화(다른 곳에서 갱신됐을 때도 입력칸이 따라간다).
   useEffect(() => {
@@ -62,6 +63,13 @@ export default function ProductShots({ id, productLink, onSaveLink }: Props) {
     async function tick() {
       const j = await load();
       if (stop) return;
+      // 글감 화면 체크박스로 이미 요청이 걸려 있으면(자동 트리거) 접힌 채로 두지 않고
+      // 바로 펼쳐서 "만드는 중"이 보이게 한다 — 안 그러면 이미 진행 중인데도
+      // 버튼을 또 눌러야 할 것처럼 보인다.
+      if (j && !autoOpened.current) {
+        autoOpened.current = true;
+        setOpen(true);
+      }
       if (j && BUSY.includes(j.status ?? "")) timer.current = setTimeout(tick, 3000);
     }
     tick();

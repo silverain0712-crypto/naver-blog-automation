@@ -29,8 +29,16 @@ _COMMON = (
     "same materials, same label text and layout. Do not redesign or restyle the product. "
     "The product fills most of the frame. Clean seamless off-white studio background, "
     "soft diffused lighting, gentle contact shadow. No people, no faces, no hands. "
-    "Photorealistic commercial product photography, sharp focus, vertical 4:5 framing."
+    "Photorealistic commercial product photography, sharp focus, vertical 4:5 framing. "
+    "If any engraving, stamp, or printed text on the product is too small or unclear in "
+    "the reference image to copy exactly character-for-character, leave that area plain "
+    "and unmarked rather than inventing text — a wrong engraving is worse than a blank one."
 )
+# 실측(2026-08-31): 라벨이 평면 인쇄물이라 레퍼런스에 크게 잡히면 글자 단위로 정확히
+# 옮기지만(위 교훈), 손잡이에 새겨진 작은 각인처럼 레퍼런스 자체에서도 잘 안 보이는
+# 글자는 모델이 그럴듯하게 지어내다가 오탈자를 낸다(티파니 스푼 "STERLING 925"가
+# "STERLING 923"으로 나오거나, 아예 존재하지 않는 한글 각인을 만들어낸 사례). 그래서
+# "안 보이면 지어내지 말고 비워둬라"를 명시적으로 지시한다.
 
 # 상세컷 구도. 이 순서대로 count 만큼 쓴다.
 SHOTS: list[dict] = [
@@ -38,7 +46,7 @@ SHOTS: list[dict] = [
         "key": "hero",
         "label": "정면 3/4 각도",
         "prompt": "Product detail photograph of {name} shown from a low three-quarter angle "
-                  "so its form and thickness read clearly. Label sharp and legible.",
+                  "so its form and thickness read clearly.",
     },
     {
         "key": "open",
