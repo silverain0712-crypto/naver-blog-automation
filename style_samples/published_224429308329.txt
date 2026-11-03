@@ -1,0 +1,159 @@
+천장팬 옷 바뀌는 AI 릴스, 힉스필드 Genjutsu 사용법 5단계
+힉스필드 Genjutsu 사용법
+힉스필드 Genjutsu로 천장팬이 지나갈 때마다 옷이 바뀌는 AI 릴스 만드는 법이에요. 아기 사진으로 만든 AI 패션 릴스 후기와 복사용 프롬프트, 1차생성 후 수정 팁까지 정리했어요.
+인스타 보다 보면 요즘 이 영상 자주 보이지 않으세요?
+소파에서 바닥으로 내려와서
+리모컨으로 천장 팬을 켜면,
+팬 날개가 화면을 지나갈 때마다 옷이 싹 바뀌는 릴스요.
+그게 너무 귀여워서
+저는 우리 뽀식이 버전으로 만들어봤어요ㅎㅎ
+이미 찍어둔 아기 사진이랑
+착장 사진만 있으면 되더라구요.
+힉스필드 Genjutsu의 Motion Transfer는 원본 영상의 카메라 워크와 타이밍을 그대로 유지한 채, 레퍼런스 영상 1개와 얼굴·착장 사진 몇 장만으로 '천장팬 옷 바뀌는 AI 릴스'를 만드는 기능이에요. 한 번에 완벽하진 않아서, 1차 생성 후 이상한 부분만 수정하는 방식이 가장 편했어요.
+3~5분이면 따라 할 수 있게
+제작법만 짧고 명확하게 정리할게요.
+실링팬 옷 바뀌는 AI 릴스
+저는 힉스필드 genjutsu에 해외 원본 릴의
+움직임을 레퍼런스로 쓰고,
+뽀식이 얼굴 사진이랑 실제 입었던 옷
+사진을 넣어서 아기 버전으로 변환했답니다.
+참고로 힉스필드는 결과가 생성할 때마다
+조금씩 달라질 수 있어요.
+'무조건 똑같이 나온다'는 아니고,
+몇 번 다듬는 과정이 필요하다는 점 먼저 말씀드릴게요.
+1. 준비물
+먼저 뭐가 필요한지 간단하게 정리할게요.
+✅ 따라 하고 싶은 레퍼런스 영상 1개 (4~30초)
+✅ 얼굴이 잘 보이는 사진 2~3장 이상
+✅ 영상에 넣고 싶은 착장 사진 여러 장
+✅ Highsfield 계정
+저는 인스타 원본 릴을 화면 녹화해서
+레퍼런스 영상으로 썼어요.
+거기에 뽀식이 얼굴이 잘 보이는 사진이랑,
+실제로 입었던 옷 사진들을 함께 준비했구요.
+힉스필드 Genjutsu는 레퍼런스 영상을 4~30초까지 지원하고, 이미지는 최대 30장까지 업로드할 수 있어요. 30초를 넘는 영상은 자동으로 30초로 잘려요.
+힉스필드 요금 플랜 비교도 표로 정리해둘게요.
+플랜
+월 요금(연간 결제 기준)
+크레딧
+Starter
+$19
+270크레딧/월
+Plus
+$47
+1,200크레딧/월
+Ultra
+$99
+3,000크레딧/월
+15초 클립 기준으로 480p는 40크레딧,
+720p는 104크레딧,
+1080p는 144크레딧이 소모돼요.
+다만, 힉스필드는 첫 가입자에게
+무료 크레딧을 주는 경우도 많아서
+다양한 루트로 확인 해보세요!
+2. 힉스필드 Genjutsu
+힉스필드 웹사이트에 접속한 다음,
+상단 메뉴에서
+Video → Genjutsu → Motion Transfer
+순서로 들어가면 돼요.
+웹링크도 하단에 넣어둘게요
+저는 기존 영상의 동작과 카메라 흐름을
+그대로 참고하고 싶어서 Motion Transfer를 썼어요.
+(참고로 Object Swap은 원본은 두고 인물·의상·배경 하나만 바꾸는 기능이에요. 저는 움직임째로 가져오고 싶어서 Motion Transfer가 맞았어요.)
+화면 구성은 대략 이런 순서예요.
+Reference Video → Reference Images → Prompt → Quality → Generate
+버튼 이름이나 화면 구성은 힉스필드 업데이트에 따라 조금씩 달라질 수 있어요.
+3. 레퍼런스 영상과 사진 넣기
+Add a reference video(레퍼런스 영상 영역)에 따라
+하고 싶은 영상을 넣어요.
+이건 움직임 참고용이라 생각하시면 돼요.
+그다음 이미지 레퍼런스 영역에
+얼굴 사진, 헤어스타일 참고 사진,
+착장 사진을 넣었어요.
+여기서 진.짜 중요한 팁 하나요.
+얼굴을 일정하게 유지하고 싶으면,
+얼굴이랑 헤어스타일이 선명하게 보이는 사진을
+쓰는 게 훨씬 좋았어요.
+조명이 일정한 밝은 사진일수록
+얼굴·헤어 일관성이 눈에 띄게 올라가더라구요.
+얼굴을 정면·측면·전신 등 여러 장 넣으면
+한 장만 넣을 때보다 훨씬 안정적이에요.
+저는 전체 영상에서
+짧은 앞머리 + 높은 양갈래 머리가 유지되도록
+요청했어요.
+4. Prompt 칸에 프롬프트 입력
+(복사용 공개)
+제일 궁금해하실 프롬프트예요.
+프롬프트는 필수는 아니지만,
+방향을 잡아주면 결과가 훨씬 깔끔하더라구요.
+아래는 누구나 자기 사진에 맞게 수정해서 쓸 수 있는 기본형이에요.
+Recreate the driving video's motion choreography and timing as a stylish outfit transition reel.
+Main subject:
+A [toddler girl / toddler boy / woman / man] with [hairstyle and key features].
+Keep the same identity throughout the entire video.
+Scene and camera:
+Use the same top-down overhead camera angle and overall movement timing as the reference video.
+The subject moves from the curved sofa onto the floor.
+A ceiling fan above begins spinning.
+Every time a fan blade passes across the frame and fully covers the camera, create a seamless outfit transition.
+Environment:
+A [stylish baby room / modern bedroom / cozy studio] with a curved sofa, soft rug and clean aesthetic.
+Action:
+The subject uses a small remote control to turn on the ceiling fan.
+After turning on the fan, place the remote on the floor and pose naturally with both hands free.
+Keep the same face, hairstyle and natural body proportions throughout the video.
+Style:
+Photorealistic, cute, polished, premium, smooth fan-blade wipe transitions and consistent identity.
+No identity drift, warped hands, duplicated limbs or messy outfit blending.
+몇 가지만 짚어드릴게요.
+Keep the same identity throughout 은
+영상 내내 같은 얼굴을 유지해달라는 뜻이라
+꼭 넣는 게 좋았어요.
+Every time a fan blade passes... 는 팬 날개가 화면을 가릴 때 옷이 바뀌게 하는 핵심 문장이에요.
+5. 한 번에 안 나오면 이렇게
+(수정 프롬프트)
+솔직히 저도 첫 결과가 바로 완벽하진 않았어요ㅜㅜ
+그래도 수정하는 게 어렵지 않더라구요.
+제가 실제로 고쳤던 부분은 이래요.
+리모컨이 계속 손에 들려 있어서 → 팬 켠 뒤 바닥에 내려놓고 두 손 자유롭게 포즈하도록 수정
+필요 없는 한복 컷이 여러 번 나와서 → 한복은 한 컷만
+그린 셋업이 옆으로 누운 모습으로 나와서 → 정면에서 얼굴과 상하의가 잘 보이게
+넣어달라던 토마토 수영복이 빠져서 → 해당 룩을 반드시 포함하도록 다시 요청
+그래서 저는 처음부터 완벽한
+긴 프롬프트를 쓰려고 애쓰기보다,
+1차 생성 → 결과 확인 → 이상한 부분만 수정이
+훨씬 편했어요.
+수정할 땐 이런 식으로 짧게 덧붙였어요.
+Keep everything else unchanged.
+After turning on the fan, place the remote on the floor and keep both hands free for natural poses.
+Remove [unwanted shot].
+Replace it with [desired shot].
+Keep the same face, hairstyle, background and transition style.
+크레딧도 아끼는 팁이 있어요.
+초안은 480p로 테스트하고(15초 기준 40크레딧 소모),
+마음에 드는 최종본만 1080p로 렌더링하면 크레딧이 절약돼요.
+같은 15초 클립도 해상도에 따라 40크레딧에서 144크레딧까지 차이가 나거든요.
+제작법 5단계 요약
+정리하면 이 5단계면 끝이에요.
+1. 레퍼런스 영상 업로드
+2. 얼굴·착장 사진 업로드
+3. Prompt 입력
+4. Generate
+5. 이상한 부분만 수정
+처음엔 AI 영상이라 어려울 줄 알았는데,
+직접 해보니 사진이랑 레퍼런스 영상만
+잘 준비하면 생각보다 어렵지 않았어요.
+특히 이미 찍어둔 아기 사진과 착장 사진으로
+새로운 릴스를 만들 수 있어서 진짜 재밌었답니다ㅎㅎ
+요즘 유행하는 AI 릴스 만들어보고 싶다면
+한번 응용해보세요 🤍
+#힉스필드
+#힉스필드사용법
+#Higgsfield
+#Genjutsu
+#AI릴스만들기
+#AI영상만들기
+#AI패션릴스
+#천장팬옷바뀌는영상
+#MotionTransfer
+#AI릴스제작법
