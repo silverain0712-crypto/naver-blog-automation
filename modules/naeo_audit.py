@@ -6,9 +6,9 @@ prompts/naeo_rules.py 는 LLM 에게 '이렇게 써라'라고 시킬 뿐, 지켰
 
 검수 항목(육아 소분류 처방):
 - 숫자가 든 문장 비율 20% 이상(표가 있으면 10% 이상)  ← 가장 강한 인용 신호
-- 표 최소 1개
+- 표는 개수 요구 없음 — 있다면 범용 머리글·본문 중복·1행짜리 같은 저품질 표만 지적(prompts/table_rules.py)
 - 소제목 3~6개
-- 제목에 구체 숫자 1개
+- 제목: 후보 구조 다양성·길이·낚시어·가격 점검(숫자는 선택 — prompts/title_rules.py)
 - 공백 제외 분량
 
 보정(densify)은 '자료에 이미 있는 수치'로만 문장을 단정형으로 고쳐 쓴다.
@@ -24,6 +24,132 @@ from modules.llm import call_json
 
 _MEDIA_RE = re.compile(r"\[(?:사진|영상)\s*\d+\]")
 _TABLE_RE = re.compile(r"\[표\].*?\[/표\]", re.DOTALL)
+# 머리글이 이 단어들뿐이면 '무엇을 비교하는지' 안 보이는 범용 표다.
+_GENERIC_HEADERS = {"구분", "항목", "내용", "비고", "설명", "참고", "특징", "정보", "종류"}
+
+
+# 메이트 17편 실측(2026-11-03): 문장 유사쌍 평균 0.4(최대 1) vs 내 최근 30편 평균 3.2(최대 10).
+_META_RE = re.compile(r"결론부터 말하면|(적어|정리해|풀어|알려|소개해)\s?(볼게요|둘게요|드릴게요|드려요)")
+_TIC_LIMITS = (
+    (re.compile(r"더라(구|고)요"), 4, "'~더라고요/더라구요'"),
+    (re.compile(r"ㅎㅎ|ㅋㅋ"), 3, "'ㅎㅎ/ㅋㅋ'"),
+    (re.compile(r"답니다"), 1, "'~답니다'"),
+)
+
+
+def _bigrams(s: str) -> set[str]:
+    s = re.sub(r"[^가-힣0-9]", "", s)
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def repetition_problems(body: str) -> list[str]:
+    """중언부언·AI 티 신호를 센다(prompts/naeo_rules.py [V7] 과 같은 기준).
+
+    · 같은 말을 다시 한 문장(요약·섹션 재요약·마무리 재요약) 수
+    · 예고·메타 문장 횟수 · 특정 어미/추임새 남발
+    """
+    problems: list[str] = []
+    text = _strip_markers(_TABLE_RE.sub(" ", body or ""))
+    flat = re.sub(r"\s+", " ", text)
+    ss = [s.strip() for s in re.split(r"(?<=[요다죠까음])[\s.!?]+", flat) if len(re.sub(r"\s", "", s)) >= 25]
+    bgs = [_bigrams(s) for s in ss]
+    pairs = []
+    for i in range(len(ss)):
+        for j in range(i + 2, len(ss)):
+            m = min(len(bgs[i]), len(bgs[j]))
+            if m and len(bgs[i] & bgs[j]) / m >= 0.5:
+                pairs.append((ss[i][:28], ss[j][:28]))
+    if len(pairs) >= 2:
+        ex = " / ".join(f"'{a}…'↔'{b}…'" for a, b in pairs[:2])
+        problems.append(
+            f"같은 말을 다시 하는 문장 {len(pairs)}쌍(메이트 평균 0.4쌍) — 요약·섹션 재요약·마무리 재요약을 "
+            f"지우고 한 곳에만 남겨라. 예: {ex}"
+        )
+    metas = _META_RE.findall(flat)
+    if len(metas) > 1:
+        problems.append(f"예고·메타 문장 {len(metas)}회('적어볼게요/정리해둘게요/결론부터 말하면') — 서두 예고 1회만 남겨라")
+    for rx, limit, label in _TIC_LIMITS:
+        n = len(rx.findall(flat))
+        if n > limit:
+            problems.append(f"{label} {n}회(상한 {limit}) — 다른 종결로 바꾸거나 지워라")
+    return problems
+
+
+_TITLE_HYPE = ("필수템", "인생템", "국민템", "무조건", "충격", "비밀", "정체", "대방출", "역대급", "기적")
+_EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]")
+
+
+def _title_shape(t: str) -> str:
+    """제목 구조 분류(title_rules T5 의 A~F). 위에서부터 먼저 맞는 것."""
+    if t.startswith("["):
+        return "말머리"
+    if re.search(r"[|ㅣ]", t):
+        return "파이프"
+    if re.search(r"[(（]", t):
+        return "괄호"
+    if re.search(r"[?]|까요|일까|할까|나요|언제|어떻게", t):
+        return "질문"
+    if "," in t:
+        return "쉼표"
+    return "평문"
+
+
+def title_problems(titles: list[str]) -> list[str]:
+    """제목 후보 검수(prompts/title_rules.py T1~T6 과 같은 기준). 본문 보정으로 못 고치므로 경고용이다.
+
+    메이트 192개 제목 실측: 공백 제외 중앙 29자(26~36), 쉼표 39%·'|' 26%·괄호 27%.
+    내 최근 30편은 쉼표형 87% — 후보 3개가 같은 틀이면 양산형으로 읽힌다.
+    """
+    problems: list[str] = []
+    ts = [t.strip() for t in titles if str(t).strip()]
+    if not ts:
+        return problems
+    for t in ts:
+        n = len(re.sub(r"\s", "", t))
+        long_ok = 45 if re.search(r"[|ㅣ(（]", t) else 36
+        if n < 20 or n > long_ok:
+            problems.append(f"제목 길이 {n}자('{t[:18]}…') — 26~36자(나열형 45자)로")
+        if re.search(r"\d[\d,]*\s?원", t):
+            problems.append(f"제목에 가격 금지('{t[:18]}…')")
+        if _EMOJI_RE.search(t):
+            problems.append(f"제목에 이모지·장식 기호 금지('{t[:18]}…')")
+        hype = [w for w in _TITLE_HYPE if w in t]
+        if hype:
+            problems.append(f"제목 낚시·과장어 {hype}('{t[:18]}…')")
+    shapes = [_title_shape(t) for t in ts]
+    if len(ts) >= 3 and len(set(shapes)) == 1:
+        problems.append(f"제목 후보 3개가 모두 같은 구조({shapes[0]}형) — 쉼표·파이프·괄호·질문·평문·말머리 중 서로 다른 3종으로(T5)")
+    elif len(ts) >= 3 and shapes.count("쉼표") >= 3:
+        problems.append("제목 후보가 쉼표형 일색 — 다른 구조를 섞어라(T5)")
+    return problems
+
+
+def table_problems(body: str) -> list[str]:
+    """[표] 블록마다 쓸모 없는 표인지 센다. 문제 없으면 빈 리스트.
+
+    기준은 prompts/table_rules.py 와 같다: 범용 머리글, 데이터 2행 미만, 칸이 문장,
+    표 속 값이 표 바로 앞뒤 문단에 그대로 반복됨.
+    """
+    problems: list[str] = []
+    for m in _TABLE_RE.finditer(body or ""):
+        raw = m.group(0).replace("[표]", "").replace("[/표]", "")
+        rows = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in raw.splitlines() if ln.strip()]
+        rows = [r for r in rows if any(r) and not all(set(c) <= set("-: ") for c in r)]
+        if len(rows) < 3:
+            problems.append("표 데이터 행이 2개 미만")
+            continue
+        header, data = rows[0], rows[1:]
+        if sum(1 for h in header if h in _GENERIC_HEADERS) >= max(1, len(header) - 1):
+            problems.append(f"범용 머리글 표({'/'.join(header)}) — 비교 기준이나 순서가 머리글에 드러나야 한다")
+        if any(len(c) > 20 for r in data for c in r):
+            problems.append("표 칸이 문장 길이 — 수치·단어 단위로 줄여야 한다")
+        if not any(re.search(r"\d", c) for r in data for c in r):
+            problems.append("표에 수치가 하나도 없음 — 비교·순서의 근거가 없다")
+        ctx = (body[max(0, m.start() - 300): m.start()] + body[m.end(): m.end() + 300])
+        cells = [c for r in data for c in r if len(c) >= 3]
+        if cells and sum(1 for c in cells if c in ctx) / len(cells) >= 0.6:
+            problems.append("표 값이 앞뒤 문단에 그대로 반복됨 — 표나 문단 중 하나를 지워라")
+    return problems
 _QUOTE_TAG_RE = re.compile(r"\[/?인용\]")
 _DIGIT_RE = re.compile(r"\d")
 
@@ -53,7 +179,7 @@ _SUBHEADING_MIN = 3
 _SUBHEADING_MAX = 6
 # v5(2026-09-26): NAEO 실측 — 인용 상위 글은 인용구를 도입부 1개로 안 끝내고
 # 섹션마다 흩어 2~4개 쓴다. 최소 기준만 여기서 강제하고(2개), 상한은 프롬프트에만 둔다.
-_QUOTE_MIN = 2
+_QUOTE_MIN = 2  # v7: 서론 선요약이 아니라 섹션별 핵심 한 문장
 
 
 def _strip_markers(body: str) -> str:
@@ -100,6 +226,9 @@ def audit(post: dict, *, length: int = 0) -> dict:
     sents = sentences(body)
     numeric = [s for s in sents if _DIGIT_RE.search(s)]
     has_table = "[표]" in body and "[/표]" in body
+    bad_tables = table_problems(body) if has_table else []
+    # 쓸모 없는 표는 숫자 목표를 깎아줄 근거가 못 된다(표를 숫자 면제용으로 쓰는 걸 막는다).
+    has_table = has_table and not bad_tables
     quote_count = body.count("[인용]")
     has_quote = quote_count > 0 and "[/인용]" in body
     consult = is_consult(body)
@@ -116,15 +245,17 @@ def audit(post: dict, *, length: int = 0) -> dict:
     titles_without_number = [t for t in titles if not _DIGIT_RE.search(t)]
 
     issues: list[str] = []
-    if not has_table:
-        issues.append("표 없음 — 조건·비교·가격·시간 중 하나를 [표]로 넣어야 한다")
+    for prob in dict.fromkeys(bad_tables):
+        issues.append(f"쓸모 없는 표: {prob}")
     if not has_quote:
-        issues.append("인용구 없음 — 서론 직후 핵심 결론 선요약을 [인용]으로 넣어야 한다")
+        issues.append("인용구 없음 — 섹션의 핵심 판단 한 문장을 [인용]으로 본문 섹션에 넣어야 한다(서론 선요약 아님)")
     elif quote_count < _QUOTE_MIN:
         issues.append(
-            f"인용구 {quote_count}개(목표 {_QUOTE_MIN}개 이상) — 도입부 1개 말고 "
-            "본문 섹션마다 하나씩 더 흩어 넣어야 한다(v5, naeo.kr 실측)"
+            f"인용구 {quote_count}개(목표 {_QUOTE_MIN}개 이상) — 본문 섹션마다 핵심 한 문장씩 흩어 넣어야 한다"
         )
+    repeats = repetition_problems(body)
+    for prob in repeats:
+        issues.append(f"중언부언: {prob}")
     if ratio < target:
         issues.append(
             f"숫자 문장 비율 {ratio:.0%} (목표 {target:.0%}) — "
@@ -146,8 +277,9 @@ def audit(post: dict, *, length: int = 0) -> dict:
         issues.append(f"소제목 {len(subs)}개 — {_SUBHEADING_MAX}개 이하로 합쳐야 한다")
     if subs and len(subs) < _SUBHEADING_MIN:
         issues.append(f"소제목 {len(subs)}개 — 최소 {_SUBHEADING_MIN}개 필요")
-    if titles and len(titles_without_number) == len(titles):
-        issues.append("제목 후보에 구체 숫자(금액·월령·개수·연도)가 하나도 없다")
+    issues.extend(title_problems(titles))
+    if len(titles) >= 3 and len(titles_without_number) == 0:
+        issues.append("제목 후보 3개가 모두 숫자를 품음 — 숫자는 본문에 실제 있는 월령·규격일 때 0~2개만(T3)")
 
     clen = content_len(body)
     if length and clen < length:
@@ -162,6 +294,8 @@ def audit(post: dict, *, length: int = 0) -> dict:
         "numeric_ratio": round(ratio, 3),
         "numeric_target": target,
         "has_table": has_table,
+        "bad_tables": bad_tables,
+        "repetition": repeats,
         "has_quote": has_quote,
         "quote_count": quote_count,
         "subheading_count": len(subs),
@@ -187,6 +321,7 @@ def densify(
     need_table: bool,
     need_numbers: bool,
     need_quote: bool = False,
+    need_dedupe: bool = False,
 ) -> str:
     """NAEO 조건 미달 본문을 한 번 보정한다. 실패하면 원문을 그대로 돌려준다."""
     if not issues:
@@ -201,18 +336,25 @@ def densify(
         )
     if need_table:
         asks.append(
-            "본문에서 표로 보면 명확한 정보(비교·가격·시간·월령 기준·구성품)를 찾아 "
-            "[표]...[/표] 블록 1개를 알맞은 위치에 넣어라. 형식은 정확히 3칸(3열), "
-            "첫 행은 머리글, 데이터 2행 이상. 표 안에 [사진N]을 넣지 마라. "
-            "표에 넣을 근거가 아래 [사용 가능한 재료]에 없으면 표를 만들지 말고 넘어가라."
+            "지적된 쓸모 없는 [표]를 고쳐라. 같은 기준 수치로 대상을 견주는 비교표(머리글=비교 기준, "
+            "행=대상) 또는 날짜·단계 순서표(첫 열=순서, 시간순 정렬)로 만들 재료가 [사용 가능한 재료]에 "
+            "있으면 3칸 표로 다시 짓고, 없으면 [표]...[/표] 블록을 통째로 지우고 그 내용이 본문 문장에 "
+            "이미 있는지만 확인하라(없으면 한 문장으로 옮긴다). 새 표를 추가하지 마라. "
+            "칸은 수치·단어 15자 이내, 표 안에 [사진N]을 넣지 마라."
         )
     if need_quote:
         asks.append(
-            "도입부(첫 소제목 직전)에 [인용]...[/인용] 블록 1개를 넣어라. 내용은 이 글의 "
-            "핵심 결론을 먼저 밝히는 1~2문장이고, 가능하면 수치를 포함한다"
-            "(예: '[인용]119,000원짜리 둑티그는 조립에 1시간 30분 걸렸지만, "
-            "16개월 뽀식이가 매일 아침 먼저 달려가는 장난감이 됐어요.[/인용]'). "
-            "본문에 이미 있는 문장을 옮겨오지 말고, 결론을 새로 압축해서 써라."
+            "본문 섹션 중 핵심 판단이 나오는 곳에 [인용]...[/인용] 블록을 넣어라(서론 직후 요약 금지). "
+            "내용은 그 섹션에서 새로 말하는 핵심 한 문장이고, 가능하면 수치를 포함한다"
+            "(예: '[인용]발 130에는 140을 신기니 두꺼운 양말을 신어도 앞코가 남았어요.[/인용]'). "
+            "다른 문단에 이미 있는 문장을 그대로 옮기지 마라 — 그 자리의 원문을 인용구로 바꾸는 식으로 넣어라."
+        )
+    if need_dedupe:
+        asks.append(
+            "중언부언 정리: 같은 결론·수치를 다시 말하는 문장(서두 요약, 섹션 끝 재요약, 마무리 재요약)을 찾아 "
+            "가장 구체적인 한 곳만 남기고 나머지는 통째로 삭제하라. 삭제로 분량이 줄어도 된다(메우지 마라). "
+            "남기는 문장은 바꾸지 않는다. 예고·메타 문장('결론부터 말하면', '적어볼게요')은 서두 1회만 남기고 지운다. "
+            "지적된 어미·추임새는 다른 종결로 바꾸거나 지운다."
         )
 
     instruction = (
