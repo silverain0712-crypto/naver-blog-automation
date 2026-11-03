@@ -492,7 +492,7 @@ def generate_post(
         system=system,
         content=[{"type": "text", "text": user_text}],
         schema=_POST_SCHEMA,
-        max_tokens=16000,
+        max_tokens=32000,
     )
 
     # 이후의 부분 수정 단계(분량 늘리기, NAEO 보정)는 이미 쓴 본문을 톤 유지하며

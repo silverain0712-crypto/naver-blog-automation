@@ -71,6 +71,33 @@ def cached_system_block(text: str) -> list:
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
+def _call_json_openai(*, model: str, system: str | list, content: list, schema: dict,
+                      max_tokens: int) -> dict:
+    """gpt-* 모델용 call_json. 텍스트 전용(이미지 블록 미지원) — 본문 작성 호출에서만 쓴다."""
+    import openai
+
+    if not config.OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY 가 설정되지 않았습니다. .env 파일을 확인해주세요.")
+    if isinstance(system, list):
+        system = "\n\n".join(b.get("text", "") for b in system)
+    if any(b.get("type") != "text" for b in content):
+        raise RuntimeError("GPT 경로는 텍스트 입력만 지원합니다.")
+    user = "\n\n".join(b["text"] for b in content)
+    client = openai.OpenAI(api_key=config.OPENAI_API_KEY, max_retries=4, timeout=600.0)
+    res = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_completion_tokens=max_tokens,
+        response_format={"type": "json_schema",
+                         "json_schema": {"name": "result", "schema": schema, "strict": False}},
+    )
+    ch = res.choices[0]
+    try:
+        return json.loads(ch.message.content or "")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"GPT 응답이 JSON 이 아니에요(finish_reason={ch.finish_reason}): {e}")
+
+
 def call_json(
     *,
     model: str,
@@ -84,6 +111,9 @@ def call_json(
     SDK 내부 재시도(max_retries) 위에, 더 긴 간격의 바깥 재시도를 둔다. 큰 요청 중
     네트워크가 몇 초~수십 초 끊겨도 회복 시간을 주고 다시 시도해 전체 실패를 막는다.
     """
+    if model.startswith("gpt"):
+        return _call_json_openai(model=model, system=system, content=content,
+                                 schema=schema, max_tokens=max_tokens)
     client = get_client()
     last = None
     for attempt in range(2):  # 총 2회(각 회마다 SDK 가 추가로 자동 재시도) — 무한 펜딩 방지
@@ -109,6 +139,10 @@ def call_json(
                 last = RuntimeError(
                     f"모델 응답이 중간에 끊겼어요(stop_reason={final.stop_reason}): {e}")
                 if attempt < 1:
+                    if final.stop_reason == "max_tokens":
+                        # 추론 토큰이 예산을 먹어 본문이 잘리는 경우(실측 2026-10-26:
+                        # 출력 16000토큰인데 JSON 은 6~8천자) — 같은 예산으로 재시도하면 또 잘린다.
+                        max_tokens = min(max_tokens * 2, 64000)
                     continue
         except _RETRYABLE as e:
             last = e
