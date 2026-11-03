@@ -25,6 +25,10 @@ from modules.llm import call_json
 # (전 컷이 움직이면 오히려 산만해진다).
 MAX_MOTION_SCENES = 2
 
+# 네이버 클립 "오늘 클립 챌린지" 참여 고정 태그(2026-03~, #오늘여기클립 후속) —
+# 유저 확인: 고정 2개 + LLM 3개 = 총 5개(클립 해시태그 최대 개수).
+_FIXED_CLIP_TAGS = ["오늘클립챌린지", "클립크리에이터"]
+
 _SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -84,11 +88,14 @@ _SCHEMA = {
         "clip": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["title", "tags"],
+            "required": ["title", "caption", "tags"],
             "properties": {
                 "title": {"type": "string", "description": "네이버 클립 제목. 30자 이내."},
+                "caption": {"type": "string",
+                            "description": "네이버 클립 게시글 설명. 2~4줄. 블로그 링크 자리는 {link}."},
                 "tags": {"type": "array", "items": {"type": "string"},
-                         "description": "'#' 없이 단어만. 10개 이하."},
+                         "description": "'#' 없이 단어만. 정확히 3개"
+                                         "(고정 태그 2개는 코드에서 별도로 자동 추가됨)."},
             },
         },
         "threads": {
@@ -113,6 +120,9 @@ _SYSTEM = """너는 육아·살림 리뷰 블로그 '비비'의 숏폼 연출가
 [씬]
 - 4~7개. 씬당 4~8초. 전체 30~45초.
 - 각 씬은 글의 [사진N] 마커 중 실제로 그 내용을 보여주는 사진을 골라 image 에 번호로 넣는다.
+- 사진 설명에 "실제로 보이는 것"이 있으면 그 내용을 우선 확인해서 자막·서사와 실제로
+  어울리는지 판단하라. 쿠폰·영수증·안내문처럼 글자 위주라 화면에서 안 예쁜 사진은,
+  그 사진 자체가 주제인 씬이 아니면 피하라.
 - 자막(caption)은 화면에 박히는 글자다. 한 줄 12자 내외, 최대 2줄. 문장을 그대로 넣지 말고 끊어라.
 - 나레이션(narration)은 귀로 듣는 말이라 자막보다 자연스러운 구어체로 쓴다. 자막을 그대로 읽지 마라.
 
@@ -137,6 +147,7 @@ motion_prompt 는 영어 한 문장으로, 카메라가 아니라 '제품이 어
 [채널별 메타]
 - youtube.title: 검색되는 제목. 핵심 키워드를 앞에.
 - clip.title: 네이버 클립은 더 짧고 대화체가 잘 먹는다.
+- clip.caption: 영상이 어떤 내용인지 짧게 설명하고 궁금증을 살짝 남겨 끝까지 보게 만든다.
 - threads: 정보를 다 주지 말고 궁금하게 남겨 블로그로 넘긴다. 해시태그 1~2개까지만."""
 
 
@@ -149,6 +160,19 @@ def _photo_index(body: str) -> list[int]:
             seen.add(n)
             out.append(n)
     return out
+
+
+def photo_candidates(body: str, allowed_photos: list[int] | None = None) -> list[int]:
+    """본문의 [사진N] 중, allowed_photos 가 있으면 그 안의 것만 남긴 후보 목록.
+
+    make_script() 내부와 clip_generator.py(비전 설명을 미리 받아둘 사진 결정)가
+    같은 로직을 공유하도록 뽑아낸 함수 — 둘이 따로 구현하면 목록이 어긋날 수 있다.
+    """
+    photos = _photo_index(body)
+    if allowed_photos is not None:
+        allowed = set(allowed_photos)
+        photos = [n for n in photos if n in allowed]
+    return photos
 
 
 def _cap_motion(scenes: list[dict]) -> list[dict]:
@@ -178,16 +202,39 @@ def make_script(
     captions: dict | None = None,
     subheadings: list[str] | None = None,
     blog_url: str = "",
+    allowed_photos: list[int] | None = None,
+    feedback: str | None = None,
+    photo_descriptions: dict[int, str] | None = None,
 ) -> dict:
     """발행 글 한 편으로 숏폼 대본 + 채널별 메타를 만든다.
 
     captions 는 draft.json 의 {"3": "사진 캡션"} 형태(사진 번호 → 회색 캡션).
+    allowed_photos 를 주면(2026-09-08, 클립 소스 선택 기능) 본문에 [사진N] 마커가
+    있어도 그 목록에 없는 번호는 후보에서 제외한다 — 유저가 편집화면에서 이 글의
+    사진 중 클립에 쓸 것만 고를 수 있게. None 이면 기존과 동일하게 본문의 모든
+    [사진N]을 후보로 쓴다.
+    feedback 을 주면(2026-09-09, 클립 전체 수정요청 슬롯) 유저가 남긴 전체 방향
+    수정 요청을 프롬프트에 얹어 다시 기획한다 — 이전 대본을 통째로 다시 넘기지
+    않아도 "이 방향으로 다시 짜라"는 지시만으로 충분하다.
+    photo_descriptions 를 주면(2026-09-09, 이미지-자막 매칭 개선) 사진 번호별
+    비전 분석 한 줄 설명(clip_generator._describe_photos)을 블로그 캡션과 함께
+    보여준다 — 캡션은 마케팅 톤이라 실제 화면 내용과 다를 수 있어서(예: 쿠폰
+    사진에 캡션이 없거나 무관한 문구) 이게 있으면 훨씬 정확하게 고른다.
     반환 dict 에 scenes[].n(1부터)과 total_seconds 를 채워서 돌려준다.
     """
     captions = captions or {}
-    photos = _photo_index(body)
-    cap_lines = [f"  [사진{n}] {captions.get(str(n)) or captions.get(n) or '(캡션 없음)'}"
-                 for n in photos]
+    photo_descriptions = photo_descriptions or {}
+    photos = photo_candidates(body, allowed_photos)
+    cap_lines = []
+    for n in photos:
+        blog_cap = captions.get(str(n)) or captions.get(n) or ""
+        desc = (photo_descriptions.get(n) or "").strip()
+        parts = []
+        if desc:
+            parts.append(f"실제로 보이는 것: {desc}")
+        if blog_cap:
+            parts.append(f"블로그 캡션: {blog_cap}")
+        cap_lines.append(f"  [사진{n}] " + (" / ".join(parts) if parts else "(캡션 없음)"))
 
     prompt = [
         "[블로그 글 제목]", title, "",
@@ -199,6 +246,8 @@ def make_script(
         "",
         "위 글을 30~45초 세로 숏폼 대본으로 옮겨라. image 에는 위 목록에 있는 번호만 쓴다.",
     ]
+    if feedback and feedback.strip():
+        prompt += ["", "[유저 수정 요청 — 반드시 반영]", feedback.strip()]
 
     result = call_json(
         model=config.SHORTFORM_MODEL,
@@ -219,10 +268,23 @@ def make_script(
     result["total_seconds"] = round(sum(sc["seconds"] for sc in scenes), 1)
     result["motion_scenes"] = [sc["n"] for sc in scenes if sc["motion_worth"] == "high"]
 
+    clip = result.get("clip") or {}
+    llm_tags = [t.strip() for t in (clip.get("tags") or []) if (t or "").strip()][:3]
+    seen_tags = set()
+    merged_tags = []
+    for t in llm_tags + _FIXED_CLIP_TAGS:
+        if t not in seen_tags:
+            seen_tags.add(t)
+            merged_tags.append(t)
+    clip["tags"] = merged_tags
+    result["clip"] = clip
+
     if blog_url:
         for key in ("threads",):
             result[key] = (result.get(key) or "").replace("{link}", blog_url)
         yt = result.get("youtube") or {}
         yt["description"] = (yt.get("description") or "").replace("{link}", blog_url)
         result["youtube"] = yt
+        clip["caption"] = (clip.get("caption") or "").replace("{link}", blog_url)
+        result["clip"] = clip
     return result

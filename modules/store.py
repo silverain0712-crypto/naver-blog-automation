@@ -180,6 +180,64 @@ def list_image_jobs(status: str = "requested") -> list[dict]:
     return r.json()
 
 
+def list_card_jobs(status: str = "requested") -> list[dict]:
+    """data.card_job.status 가 주어진 값인 초안들(오래된 순).
+
+    자동 생성된 카드뉴스 한 장을 피드백 반영해 다시 만드는 신호 — list_image_jobs 와
+    같은 방식(초안 status 는 안 건드리고 별도 JSON 필드로 신호를 준다).
+    """
+    _require()
+    url = (f"{config.SUPABASE_URL}/rest/v1/drafts"
+           f"?select=*&data->card_job->>status=eq.{status}&order=created_at.asc")
+    r = httpx.get(url, headers=_rest_headers(), timeout=_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def list_gif_jobs(status: str = "requested") -> list[dict]:
+    """data.gif_job.status 가 주어진 값인 초안들(오래된 순).
+
+    동영상 → GIF 변환 신호(list_clip_jobs 와 동일 패턴). mac_clip_generator.py 가
+    폴링한다 — 블로그 글쓰기 파이프라인(mac_generator.py)과는 무관.
+    """
+    _require()
+    url = (f"{config.SUPABASE_URL}/rest/v1/drafts"
+           f"?select=*&data->gif_job->>status=eq.{status}&order=created_at.asc")
+    r = httpx.get(url, headers=_rest_headers(), timeout=_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def list_clip_script_jobs(status: str = "requested") -> list[dict]:
+    """data.clip_script_job.status 가 주어진 값인 초안들(오래된 순).
+
+    클립 대본만 기획하는 신호(사진 다운로드/렌더 없음, LLM 호출 하나뿐이라 가벼움).
+    list_clip_jobs 와 같은 프로세스(mac_clip_generator.py)가 폴링해도 안전하다 —
+    Veo 대기 같은 장시간 블로킹이 없다.
+    """
+    _require()
+    url = (f"{config.SUPABASE_URL}/rest/v1/drafts"
+           f"?select=*&data->clip_script_job->>status=eq.{status}&order=created_at.asc")
+    r = httpx.get(url, headers=_rest_headers(), timeout=_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def list_clip_jobs(status: str = "requested") -> list[dict]:
+    """data.clip_job.status 가 주어진 값인 초안들(오래된 순).
+
+    네이버 클립(숏폼) 생성 신호 — list_image_jobs/list_card_jobs 와 같은 방식
+    (초안 status 는 안 건드리고 별도 JSON 필드로 신호를 준다). 완전히 별도 프로세스
+    (mac_clip_generator.py)가 폴링한다 — 블로그 생성기/발행 워커와 무관.
+    """
+    _require()
+    url = (f"{config.SUPABASE_URL}/rest/v1/drafts"
+           f"?select=*&data->clip_job->>status=eq.{status}&order=created_at.asc")
+    r = httpx.get(url, headers=_rest_headers(), timeout=_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
 def get_draft(draft_id: str) -> dict | None:
     _require()
     url = f"{config.SUPABASE_URL}/rest/v1/drafts?id=eq.{draft_id}&select=*"

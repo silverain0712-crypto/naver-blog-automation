@@ -6,5 +6,10 @@ playwright>=1.40
 openpyxl>=3.1
 pypdf>=4.0
 python-docx>=1.1
-# 정보성/화제성 글 카드뉴스 이미지 생성(modules/card_images.py)
+# 정보성/화제성 글 카드뉴스 이미지 생성(modules/card_images.py) — 실사 2장은 힉스필드,
+# 텍스트 들어가는 8장은 gpt-image-1(한글 렌더링 정확도 때문)
 higgsfield-client>=0.1.0
+openai>=1.50
+# 클립 자막 폰트가 특정 한글 음절을 못 그려 빈 네모(tofu box)가 나오는 걸 막기 위한
+# 글리프 커버리지 확인(modules/video_maker.py _resolve_font)
+fonttools>=4.50

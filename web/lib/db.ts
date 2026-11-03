@@ -104,14 +104,20 @@ export async function createSignedUpload(path: string, upsert = false): Promise<
 }
 
 // 보관 사진 미리보기용 — 저장된 이미지 경로들의 서명 다운로드 URL(절대 URL) 발급.
+// download: true(또는 파일명)를 주면 Supabase 가 Content-Disposition: attachment
+// 헤더를 실어 응답한다 — 모바일 Safari 는 <a download> 속성을 교차 출처 URL에서
+// 무시하고 그냥 재생해버리므로(2026-09-10 실측), 진짜 다운로드를 강제하려면 이
+// 서버 헤더가 필요하다. 미리보기(<video>/<img>)용 URL엔 절대 쓰면 안 된다 —
+// 브라우저가 인라인 재생을 거부한다.
 export async function createSignedDownloads(
   paths: string[],
   expiresIn = 60 * 60,
+  options?: { download?: string | boolean },
 ): Promise<string[]> {
   if (paths.length === 0) return [];
   const { data, error } = await supabase.storage
     .from(SUPABASE_BUCKET)
-    .createSignedUrls(paths, expiresIn);
+    .createSignedUrls(paths, expiresIn, options);
   if (error || !data) throw new Error(`createSignedDownloads: ${error?.message}`);
   return data.map((d) => {
     const url = d.signedUrl ?? "";
