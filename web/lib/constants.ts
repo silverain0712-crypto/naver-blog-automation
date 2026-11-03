@@ -7,6 +7,7 @@ export const POST_TYPES: { label: string; key: string }[] = [
   { label: "홈피드형(트렌드·이슈)", key: "hompiid" },
   { label: "여행 후기", key: "travel" },
   { label: "제품 리뷰", key: "product" },
+  { label: "할인코드·프로모션 소개", key: "promo" },
 ];
 
 export const POST_LENGTHS = [1500, 2000, 2500];
