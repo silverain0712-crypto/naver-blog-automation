@@ -263,6 +263,30 @@ def _set_color(frame, color, log):
         log(f"글자색 설정 실패: {e}")
 
 
+def _set_bg_color(frame, color, log):
+    """배경색(하이라이트) 지정. color=None 이면 '색상 없음'.
+
+    실측(2026-09-08): button.se-background-color-toolbar-button 이 실제로 존재하고
+    (기존 코드엔 없었음 — 이번에 새로 확인), 팔레트 스와치는 글자색과 같은
+    button.se-color-palette[data-color='#hex'] 구조를 공유한다(_set_color 와 동일 패턴).
+    """
+    try:
+        btn = frame.locator("button.se-background-color-toolbar-button").first
+        btn.click(timeout=2000)
+        time.sleep(0.3)
+        if color is None:
+            sw = frame.locator("button.se-color-palette-no-color")
+        else:
+            sw = frame.locator(f"button.se-color-palette[data-color='{color}']")
+        if sw.count():
+            sw.first.click(timeout=2000)
+            log(f"배경색 {'없음' if color is None else color} 적용")
+        else:
+            btn.click()  # 못 찾으면 닫기
+    except Exception as e:
+        log(f"배경색 설정 실패: {e}")
+
+
 # 이모지/기호(📍❤️✔ 등). insert_text 가 이 문자 뒤 텍스트를 유실시키는 경우가 있다.
 _EMOJI_RE = re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF"
@@ -323,6 +347,28 @@ def _set_bold(frame, on, log):
             b.click(timeout=2000)
     except Exception as e:
         log(f"볼드 설정 실패: {e}")
+
+
+def _set_paragraph_format(frame, value, log):
+    """문단 서식(본문/소제목 등) 지정. value 예: 'sectionTitle'.
+
+    실측(2026-09-04): 이 버튼(se-text-format-toolbar-button)으로 '소제목'을 지정하면
+    문단이 se-text 컴포넌트가 아니라 별도의 se-sectionTitle 컴포넌트로 감싸진다
+    (data-a11y-title='소제목') — 그냥 본문 문단에 폰트/굵기만 흉내낸 것과 달리 실제
+    시맨틱 소제목 태그로 저장돼 AI 인용 등에 유리하다고 함.
+    """
+    try:
+        btn = frame.locator("button.se-text-format-toolbar-button").first
+        btn.click(timeout=2000)
+        time.sleep(0.3)
+        opt = frame.locator(f"button[data-value='{value}']")
+        if opt.count():
+            opt.first.click(timeout=2000)
+            log(f"문단 서식 '{value}' 지정")
+        else:
+            btn.click()  # 닫기
+    except Exception as e:
+        log(f"문단 서식 설정 실패: {e}")
 
 
 def _insert_divider(frame, log, style="line6"):
@@ -596,6 +642,10 @@ _TITLE_FONT = "나눔명조"   # 큰 제목
 _TITLE_SIZE = 30
 _SUB_FONT = "나눔명조"     # 소제목 폰트
 _SUB_SIZE = 19            # 소제목(검정 볼드)
+# 강조 마커([강조]/[주의]) 색상 — 2026-09-08 실측한 네이버 색상 팔레트(se-color-palette)
+# 스와치 중에서 고름. 배경색은 부드러운 노랑(형광펜 느낌), 글자색은 선명한 빨강.
+_EMPH_BG = "#fff8b2"
+_WARN_COLOR = "#ff0010"
 _NOTICE_KEYS = ("수수료", "제공받아", "제공 받아", "원고료", "협찬",
                 "쇼핑 커넥트", "쇼핑커넥트", "무상으로", "대가를")
 
@@ -989,62 +1039,127 @@ def _body_paragraphs(frame):
 def _para_text_styled(frame, text, min_px=17, min_weight=600):
     """본문에서 text 와 정확히 일치하는 문단을 찾아 실제 글자 크기/굵기를 읽어,
     본문(15px/400)보다 크거나 볼드면 True. (커서 기준이 아니라 텍스트로 문단을 찾으므로
-    드롭다운 클릭으로 커서가 밀려도 정확히 검증된다.)"""
+    드롭다운 클릭으로 커서가 밀려도 정확히 검증된다.)
+
+    문단 안에 span 이 여러 겹 중첩될 수 있고(실측 2026-09-08), 특히 볼드는 span 이
+    아니라 그 안의 <b> 자손 태그로 렌더링돼(예: <span class="se-highlight" style=
+    "background-color:...">...<b>텍스트</b></span>) span 의 computedStyle 만 보면
+    fontWeight 가 그대로 400 으로 나와 false negative가 났다. span 하나가 아니라
+    문단 안의 모든 자손 요소(*)를 훑어 가장 큰 값을 쓴다.
+    """
     try:
         for el in _body_paragraphs(frame):
             if (el.text_content() or "").strip() != text:
                 continue
             fs = el.evaluate(
-                "e => { const t = e.querySelector('span') || e;"
-                " const s = getComputedStyle(t); return s.fontSize + '|' + s.fontWeight; }"
+                "e => { const all = [...e.querySelectorAll('*')]; "
+                " const targets = all.length ? all : [e]; "
+                " let maxPx = 0, maxWt = 400; "
+                " for (const t of targets) { "
+                "   const s = getComputedStyle(t); "
+                "   const px = parseFloat(s.fontSize) || 0; "
+                "   const wt = /^\\d+$/.test(s.fontWeight) ? parseInt(s.fontWeight) "
+                "     : (s.fontWeight === 'bold' ? 700 : 400); "
+                "   if (px > maxPx) maxPx = px; if (wt > maxWt) maxWt = wt; "
+                " } "
+                " return maxPx + '|' + maxWt; }"
             )
-            px_s, wt_s = (fs or "0px|400").split("|")
-            px = float(px_s.replace("px", "") or 0)
-            wt = int(wt_s) if wt_s.isdigit() else (700 if wt_s == "bold" else 400)
+            px_s, wt_s = (fs or "0|400").split("|")
+            px = float(px_s or 0)
+            wt = int(wt_s or 400)
             return px >= min_px or wt >= min_weight
         return False
     except Exception:
         return False
 
 
-def _apply_sub_style(frame, page, sub_on, norm, log):
-    """안정된 문서에서 소제목 문단을 '실제 클릭→키보드 선택→스타일' 로 입히고, 텍스트로
+def _apply_paragraph_style(frame, page, style_on, norm, log, paragraph_format=None, label="문단"):
+    """안정된 문서에서 문단을 '실제 클릭→키보드 선택→스타일' 로 입히고, 텍스트로
     실제 적용됐는지 확인해 안 먹었으면 재시도(최대 3회). JS Range 선택은 네이버 툴바가
-    무시하므로 실제 클릭+키보드 선택을 쓴다."""
+    무시하므로 실제 클릭+키보드 선택을 쓴다.
+
+    paragraph_format 을 주면(예: "sectionTitle") 문단 서식 자체를 그걸로 지정한 뒤
+    style_on()을 얹는다(소제목 전용 — se-sectionTitle 컴포넌트, AI 인용에 유리한
+    시맨틱 마크업, 실측: naver-editor-formatting 메모). None 이면 문단 서식은 건드리지
+    않고 style_on()만 적용한다(2026-09-08 강조 마커용으로 일반화 — 강조 문장을 소제목
+    컴포넌트로 만들면 안 되므로).
+
+    각 툴바 조작 뒤 포커스/선택이 풀리므로 매번 문단을 실제로 다시 클릭+선택한다
+    (핸들 재사용 금지 — 서식 전환으로 컴포넌트가 바뀌면 이전 핸들이 stale 해질 수 있다).
+    """
     kb = page.keyboard
-    for attempt in range(3):
-        handle = None
+
+    def find():
         for el in _body_paragraphs(frame):
             if (el.text_content() or "").strip() == norm:
-                handle = el
-                break
+                return el
+        return None
+
+    def select():
+        handle = find()
         if handle is None:
             return False
+        handle.evaluate("e => e.scrollIntoView({block: 'center'})")
+        time.sleep(0.1)
+        handle.click(timeout=3000, force=True)
+        kb.press("Home"); kb.press("Shift+End")   # 줄 전체 선택(네이버가 인식하는 실제 선택)
+        time.sleep(0.1)
+        return True
+
+    for attempt in range(3):
         try:
-            handle.evaluate("e => e.scrollIntoView({block: 'center'})")
-            time.sleep(0.1)
-            handle.click(timeout=3000, force=True)
+            if not select():
+                return False
+            if paragraph_format:
+                _set_paragraph_format(frame, paragraph_format, log)
+                if not select():
+                    time.sleep(0.2)
+                    continue
+            else:
+                # 소제목 경로는 _set_paragraph_format+재선택을 거치며 자연히 생기는
+                # 대기시간이 있어 툴바가 새 선택 상태로 갱신될 여유가 있다. 강조처럼
+                # 그 경로를 안 타는 경우엔 이 대기를 직접 줘야 볼드 토글 버튼이 "이전
+                # 선택의 활성 상태"를 그대로 들고 있다가 클릭을 건너뛰는 실측 버그를
+                # 피할 수 있다(2026-09-08).
+                time.sleep(0.3)
         except Exception:
             time.sleep(0.2)
             continue
-        kb.press("Home"); kb.press("Shift+End")   # 줄 전체 선택(네이버가 인식하는 실제 선택)
-        time.sleep(0.1)
-        sub_on()                                   # 선택 영역에 나눔명조19 볼드 적용
+        style_on()                                 # 선택 영역에 스타일 적용
         kb.press("End")
         if _para_text_styled(frame, norm):
             return True
         time.sleep(0.2)
-    log(f"  (소제목 스타일 실패: {norm[:16]})")
+    log(f"  ({label} 스타일 실패: {norm[:16]})")
     return False
+
+
+def _apply_sub_style(frame, page, sub_on, norm, log):
+    """소제목 스타일링 — _apply_paragraph_style 의 얇은 래퍼(기존 호출부·동작 그대로)."""
+    return _apply_paragraph_style(frame, page, sub_on, norm, log,
+                                   paragraph_format="sectionTitle", label="소제목")
 
 
 def _focus_body_end(frame, log=None):
     """이미지 삽입 뒤 커서가 편집영역을 벗어나면 이후 타이핑이 통째로 유실된다
     (네이버 에디터 변경으로 '삽입 후 커서가 이미지 뒤에 남는다'는 가정이 깨짐).
-    본문 마지막 문단을 실제로 클릭해 커서를 편집영역 끝으로 되돌린다."""
-    for sel in (".se-component.se-text .se-text-paragraph",
-                ".se-main-container .se-text-paragraph",
-                ".se-text-paragraph"):
+    본문 마지막 문단을 실제로 클릭해 커서를 편집영역 끝으로 되돌린다.
+
+    실측(2026-09-02, "헬로디노 아기 디딤대" 글에서 재현): 표 바로 뒤에서 이 함수가
+    불릴 때 가장 구체적인 선택자(.se-component.se-text .se-text-paragraph)가 매치
+    0개라 더 느슨한 폴백(.se-main-container .se-text-paragraph 등)으로 넘어갔는데,
+    그 선택자는 표 **셀 안**의 문단도 같이 잡혀 `.last`가 표 안을 가리켰다 — 커서가
+    표 안에 남은 채 다음에 삽입되는 사진이 표 셀 속으로 들어갔다. 그래서 모든 단계에서
+    표(.se-component.se-table) 조상을 가진 문단은 XPath로 명시적으로 제외한다.
+    """
+    exclude_table = "[not(ancestor::*[contains(@class,'se-table')])]"
+    for sel in (
+        f"xpath=//*[contains(@class,'se-component') and contains(@class,'se-text')]"
+        f"//*[contains(@class,'se-text-paragraph')]{exclude_table}",
+        f"xpath=//*[contains(@class,'se-main-container')]"
+        f"//*[contains(@class,'se-text-paragraph')]{exclude_table}",
+        f"xpath=//*[contains(@class,'se-text-paragraph')]{exclude_table}",
+    ):
         try:
             loc = frame.locator(sel)
             if loc.count():
@@ -1065,8 +1180,9 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     """본문을 비비 글 형식으로 입력한다.
 
     구조: (협찬 고지문 회색) → 큰 제목(나눔명조24 볼드) → 요약(회색 나눔명조11)
-          → 구분선 → 안녕하세요+본문(나눔스퀘어) → [사진N] 위치 사진+회색 캡션.
-    소제목은 검정 볼드 19, [영상N]은 마커로 남긴다.
+          → 구분선 → 본문(나눔스퀘어) → [사진N] 위치 사진+회색 캡션.
+    소제목은 에디터의 '소제목' 문단 서식(se-sectionTitle, AI 인용에 유리한 시맨틱 마크업)으로
+    지정한 뒤 그 위에 검정 볼드 19(나눔명조)를 그대로 얹는다. [영상N]은 마커로 남긴다.
     """
     target = None
     for sel in [".se-section-text .se-text-paragraph",
@@ -1090,6 +1206,10 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     captions = captions or {}
     # 소제목 비교는 불릿/기호 제거 후 정규화해서 매칭
     sub_set = {_strip_bullet(s) for s in (subheadings or []) if _strip_bullet(s)}
+    # 강조 마커([강조]/[주의])로 표시된 문장 — 본문 전체 입력이 끝난 뒤 별도 패스에서
+    # 스타일을 입힌다(소제목과 동일한 이유 — 타이핑 중 스타일 적용은 이후 입력을 흔든다).
+    emph_set: set[str] = set()
+    warn_set: set[str] = set()
 
     def title_on():
         _set_text_style(frame, _TITLE_FONT, _TITLE_SIZE, log)
@@ -1119,13 +1239,42 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
         _ensure_strike_off(frame, log)
         _ensure_focus(frame, log)
 
-    # 인사말 기준 분리
+    def emph_on():
+        _set_text_style(frame, family, size, log)
+        _set_bold(frame, True, log)
+        _set_color(frame, None, log)
+        _set_bg_color(frame, _EMPH_BG, log)
+        _ensure_strike_off(frame, log)
+        _ensure_focus(frame, log)
+
+    def warn_on():
+        _set_text_style(frame, family, size, log)
+        _set_bold(frame, True, log)
+        _set_color(frame, _WARN_COLOR, log)
+        _set_bg_color(frame, None, log)
+        _ensure_strike_off(frame, log)
+        _ensure_focus(frame, log)
+
+    # 인트로(큰 제목/회색 요약) 분리 — 요약 뒤 빈 줄 기준으로 가른다.
+    # (2026-09-02: "안녕하세요, 비비입니다" 인사말을 없앴다 — prompts/style_rules.py 가
+    # 요약 다음에 반드시 빈 줄 하나를 넣고 바로 도입부를 시작하게 지시하므로, 그 빈 줄이
+    # 새 경계가 된다. 다만 실측해보니 모델이 가끔 키워드 한 줄 뒤에도 빈 줄을 넣는다 —
+    # 그 이른 빈 줄을 경계로 오인하면 요약 전체가 본문으로 새 버린다. 그래서 '본문 줄이
+    # 최소 2줄(키워드+요약 한 줄 이상) 나온 뒤의 빈 줄'만 경계로 인정한다.)
     lines = body.split("\n")
-    g_idx = next((i for i, l in enumerate(lines) if "안녕하세요" in l and "비비" in l), None)
+    g_idx = None
+    _seen = 0
+    for _i, _l in enumerate(lines):
+        if not _l.strip():
+            if _seen >= 2:
+                g_idx = _i
+                break
+        else:
+            _seen += 1
     intro = lines[:g_idx] if g_idx is not None else []
     rest_text = "\n".join(lines[g_idx:]) if g_idx is not None else body
 
-    # 인트로(큰 제목/회색 요약 블록)에 들어간 [인용] 블록은 인사말 뒤로 옮긴다.
+    # 인트로(큰 제목/회색 요약 블록)에 들어간 [인용] 블록은 도입부 앞으로 옮긴다.
     # 인트로에 그대로 두면 '큰 제목' 텍스트로 타이핑돼 제목이 오염되고, 토큰 루프를
     # 안 타서 인용구 컴포넌트도 안 만들어진다(생성기가 맨 위에 붙이는 경우 대비).
     if intro:
@@ -1135,7 +1284,7 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
             intro = re.sub(r"\[인용\][\s\S]*?\[/인용\]", "", intro_joined).split("\n")
             r_lines = rest_text.split("\n")
             rest_text = "\n".join(r_lines[:1] + [""] + quotes + [""] + r_lines[1:])
-            log(f"인트로의 인용구 {len(quotes)}개를 인사말 뒤로 옮김(제목 오염 방지).")
+            log(f"인트로의 인용구 {len(quotes)}개를 도입부 앞으로 옮김(제목 오염 방지).")
 
     # 인트로(제목/요약 블록)에 섞인 [사진N] 마커는 본문 앞쪽으로 옮긴다. 인트로에 그대로
     # 두면 '큰 제목' 텍스트로 타이핑되고(사진은 안 들어감), PASS 2 대상(used)에도 안 잡혀
@@ -1160,8 +1309,10 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     rest_text = re.sub(r"[ \t]*(\[(?:사진|상품)\s*\d+\])[ \t]*", r"\n\1\n", rest_text)
     rest_text = re.sub(r"\n{3,}", "\n\n", rest_text)
 
-    # 인트로 = 인사말 전까지. 고지문(회색) → 큰 제목(첫 블록, 나눔명조30 블랙)
-    #        → 메타 요약(다음 블록, 회색). 제목/요약은 '첫 빈 줄' 기준으로 가른다.
+    # 인트로 = 도입부 전까지. 고지문(회색) → 큰 제목(첫 블록, 나눔명조30 블랙)
+    #        → 메타 요약(다음 블록, 회색). 제목/요약은 intro 내부의 '빈 줄' 기준으로
+    #        가르는데, intro 자체가 이미 "첫 빈 줄 앞까지"라 보통 내부엔 빈 줄이 없다 —
+    #        그럴 땐 아래 폴백(앞 1~2줄만 제목)이 대신 처리한다.
     #        (예전엔 첫 줄 1줄만 제목이라 2줄 제목이 회색 요약으로 새어 제목이 없어 보였음)
     notice = [l.strip() for l in intro if l.strip() and any(k in l for k in _NOTICE_KEYS)]
     body_intro = [l for l in intro if not (l.strip() and any(k in l for k in _NOTICE_KEYS))]
@@ -1172,9 +1323,13 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 after_gap = True
             continue
         (summary_lines if after_gap else title_lines).append(l.strip())
-    # 빈 줄이 없어 안 갈렸으면 앞 1~2줄만 제목으로(나머지는 회색 요약)
-    if not summary_lines and len(title_lines) > 2:
-        title_lines, summary_lines = title_lines[:2], title_lines[2:]
+    # 빈 줄이 없어 안 갈렸으면 첫 줄만 제목으로(나머지는 회색 요약). 큰 제목은 항상
+    # 키워드 한 줄(prompts/style_rules.py 1번)이라 1줄을 넘으면 전부 요약이어야 한다.
+    # 실측(2026-09-02): 이 임계값이 ">2"였던 탓에 title_lines 가 딱 2줄(키워드+긴 요약
+    # 문장 하나, 내부에 빈 줄 없음)일 때 안 갈라져 요약 문장이 회색 대신 큰 제목처럼
+    # 굵게 찍혔다 — 네이버에 이미 발행된 "아기 수족구 초기증상" 글에서 재현 확인.
+    if not summary_lines and len(title_lines) > 1:
+        title_lines, summary_lines = title_lines[:1], title_lines[1:]
     for s in notice:
         gray_on(); _type_lines(kb, s); kb.press("Enter"); kb.press("Enter")
     if title_lines:
@@ -1208,18 +1363,30 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     used = set()    # 본문에서 참조된 사진 번호(마커로 남겨둔 것)
     failed = set()  # PASS 2 재삽입 실패 → 끝에 모아 업로드
     tokens = re.split(
-        r"(\[표\][\s\S]*?\[/표\]|\[인용\][\s\S]*?\[/인용\]|\[사진\s*\d+\]"
-        r"|\[영상\s*\d+\]|\[상품\s*\d+\])",
+        r"(\[표\][\s\S]*?\[/표\]|\[인용\][\s\S]*?\[/인용\]|\[강조\][\s\S]*?\[/강조\]"
+        r"|\[주의\][\s\S]*?\[/주의\]|\[사진\s*\d+\]|\[영상\s*\d+\]|\[상품\s*\d+\])",
         rest_text,
     )
     dup_caption = None  # 직전 사진의 회색 캡션 — 본문에 같은 줄이 또 오면 1회 건너뛴다
     for tok in tokens:
         mt = re.match(r"\[표\]([\s\S]*?)\[/표\]", tok)
         mq = re.match(r"\[인용\]([\s\S]*?)\[/인용\]", tok)
+        me = re.match(r"\[강조\]([\s\S]*?)\[/강조\]", tok)
+        mw = re.match(r"\[주의\]([\s\S]*?)\[/주의\]", tok)
         mp = re.match(r"\[사진\s*(\d+)\]", tok)
         mv = re.match(r"\[영상\s*(\d+)\]", tok)
         mc = re.match(r"\[상품\s*(\d+)\]", tok)
-        if mq:
+        if me:
+            text = " ".join(l.strip() for l in me.group(1).strip().split("\n") if l.strip())
+            if text:
+                body_on(); _insert_text_safe(kb, text)
+                emph_set.add(text)
+        elif mw:
+            text = " ".join(l.strip() for l in mw.group(1).strip().split("\n") if l.strip())
+            if text:
+                body_on(); _insert_text_safe(kb, text)
+                warn_set.add(text)
+        elif mq:
             quote = "\n".join(l.strip() for l in mq.group(1).strip().split("\n") if l.strip())
             if quote:
                 try:
@@ -1302,7 +1469,9 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
     try:
         texts = frame.locator(".se-text-paragraph").all_inner_texts()
         got = len(re.sub(r"\s", "", "".join(texts)))
-        expect = len(re.sub(r"\s", "", re.sub(r"\[영상\s*\d+\]", "", body)))
+        expect_body = re.sub(r"\[영상\s*\d+\]", "", body)
+        expect_body = re.sub(r"\[(강조|주의)\]|\[/(강조|주의)\]", "", expect_body)
+        expect = len(re.sub(r"\s", "", expect_body))
         mark = "✓" if got >= expect * 0.92 else "⚠ 유실 의심"
         log(f"자가진단(PASS1 텍스트): 에디터 {got}자 / 예상 {expect}자 {mark}")
     except Exception as e:
@@ -1340,6 +1509,23 @@ def _fill_body_with_media(frame, page, body, image_paths, log, captions=None,
                 + ("" if styled >= len(sub_set) else " ⚠ 일부 미적용"))
         except Exception as e:
             log(f"소제목 스타일 확인 건너뜀: {str(e)[:40]}")
+
+    # ── 강조 스타일링 패스 ── [강조]/[주의]로 표시된 문장에 하이라이트/빨간 볼드를
+    # 입힌다. 소제목과 같은 이유로 본문이 다 안정된 지금 별도 패스에서 처리한다
+    # (paragraph_format=None 이라 se-sectionTitle 로는 바뀌지 않는다 — 그냥 본문
+    # 문단인 채로 볼드+배경색/글자색만 얹는다).
+    if emph_set or warn_set:
+        done_emph = sum(
+            1 for norm in emph_set
+            if _apply_paragraph_style(frame, page, emph_on, norm, log, label="강조")
+        )
+        done_warn = sum(
+            1 for norm in warn_set
+            if _apply_paragraph_style(frame, page, warn_on, norm, log, label="주의")
+        )
+        _focus_body_end(frame, log); body_on()
+        log(f"강조 스타일링 패스: 강조 {done_emph}/{len(emph_set)}개, "
+            f"주의 {done_warn}/{len(warn_set)}개 적용")
 
     # ── PASS 2: 사진 배치 ──
     if inline_mode:
