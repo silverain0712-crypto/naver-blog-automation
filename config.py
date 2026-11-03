@@ -26,6 +26,13 @@ UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "").strip()  # 무료 스
 #  "openai" = OpenAI API(gpt-image-2) — 장당 과금
 # codex 가 실패했을 때 OpenAI API 로 몰래 넘어가 과금되는 걸 막기 위해, 그 대체는 명시적으로 켠 때만 한다.
 IMAGE_BACKEND = os.getenv("IMAGE_BACKEND", "codex").strip().lower()
+# 글 작성·분석(LLM) 백엔드(modules/llm.py).
+#  "codex"     = ChatGPT 구독(GPT Pro)의 Codex CLI — API 크레딧 0 (modules/codex_llm.py)
+#  "anthropic" = Anthropic API(기존 방식, 호출마다 과금)
+# codex 가 한도·로그인 문제로 실패해도 Anthropic API 로 몰래 넘어가지 않는다(과금 방지) —
+# ALLOW_LLM_API_FALLBACK=1 로 명시했을 때만 API 로 대체한다.
+LLM_BACKEND = os.getenv("LLM_BACKEND", "codex").strip().lower()
+ALLOW_LLM_API_FALLBACK = os.getenv("ALLOW_LLM_API_FALLBACK", "").strip().lower() in ("1", "true", "yes")
 ALLOW_OPENAI_IMAGE_FALLBACK = os.getenv("ALLOW_OPENAI_IMAGE_FALLBACK", "").strip().lower() in ("1", "true", "yes")
 HF_API_KEY = os.getenv("HF_API_KEY", "").strip()   # 힉스필드(카드뉴스 배경 이미지 생성)
 HF_API_SECRET = os.getenv("HF_API_SECRET", "").strip()

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import config
 from modules.freshness import freshness_rule
-from modules.llm import get_client, _RETRYABLE
+from modules.llm import _RETRYABLE, available as llm_available, search_text
 
 _SKIP_MARK = "보강 불필요"
 _MAX_SEARCHES = 8
@@ -43,7 +43,7 @@ _SYSTEM = (
 
 def research(*, keyword: str, memo: str, structure_label: str = "", guideline: str = "") -> str:
     """글감으로 웹 검색 사실 보강 메모를 만든다. 필요 없거나 실패하면 빈 문자열."""
-    if not config.ENABLE_RESEARCH or not config.ANTHROPIC_API_KEY:
+    if not config.ENABLE_RESEARCH or not llm_available():
         return ""
 
     prompt = (
@@ -55,22 +55,14 @@ def research(*, keyword: str, memo: str, structure_label: str = "", guideline: s
         prompt += f"\n[참고 자료(협찬 가이드/제품 설명서 일부)]\n{guideline.strip()[:1500]}\n"
     prompt += "\n위 주제로 블로그 독자에게 유용한 사실 정보를 웹에서 찾아 정리해줘."
 
-    client = get_client()
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": _MAX_SEARCHES}]
-
     last = None
     for attempt in range(2):
         try:
-            resp = client.messages.create(
+            text = search_text(
                 model=config.RESEARCH_MODEL,
-                max_tokens=2500,
                 system=_SYSTEM + "\n\n" + freshness_rule(),
-                messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-                tools=tools,
+                prompt=prompt, max_tokens=2500, max_uses=_MAX_SEARCHES,
             )
-            text = "".join(
-                b.text for b in resp.content if getattr(b, "type", "") == "text"
-            ).strip()
             if not text or text.startswith(_SKIP_MARK):
                 return ""
             return text

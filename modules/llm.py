@@ -98,6 +98,34 @@ def _call_json_openai(*, model: str, system: str | list, content: list, schema: 
         raise RuntimeError(f"GPT 응답이 JSON 이 아니에요(finish_reason={ch.finish_reason}): {e}")
 
 
+def available() -> bool:
+    """글 작성 LLM 을 쓸 수 있는지(Codex=GPT Pro 구독 로그인 또는 Anthropic 키)."""
+    if config.LLM_BACKEND == "codex":
+        from modules import codex_llm
+        return codex_llm.available() or (config.ALLOW_LLM_API_FALLBACK and bool(config.ANTHROPIC_API_KEY))
+    return bool(config.ANTHROPIC_API_KEY)
+
+
+def search_text(*, model: str, system: str, prompt: str, max_tokens: int = 2500,
+                max_uses: int = 5) -> str:
+    """웹 검색을 켜고 자유 텍스트 답을 받는다(리서치·벤치마킹). Codex 또는 Anthropic web_search 서버툴."""
+    if config.LLM_BACKEND == "codex":
+        from modules import codex_llm
+        try:
+            return codex_llm.search_text(model=model, system=system, prompt=prompt)
+        except codex_llm.CodexLLMError as e:
+            if not (config.ALLOW_LLM_API_FALLBACK and config.ANTHROPIC_API_KEY):
+                raise RuntimeError(f"ChatGPT 구독(Codex) 검색 실패: {e}") from e
+            print(f"  (Codex 검색 실패 → Anthropic API 로 대체: {str(e)[:100]})")
+    client = get_client()
+    resp = client.messages.create(
+        model=model, max_tokens=max_tokens, system=system,
+        messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}],
+    )
+    return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+
+
 def call_json(
     *,
     model: str,
@@ -114,6 +142,14 @@ def call_json(
     if model.startswith("gpt"):
         return _call_json_openai(model=model, system=system, content=content,
                                  schema=schema, max_tokens=max_tokens)
+    if config.LLM_BACKEND == "codex":
+        from modules import codex_llm
+        try:
+            return codex_llm.call_json(model=model, system=system, content=content, schema=schema)
+        except codex_llm.CodexLLMError as e:
+            if not (config.ALLOW_LLM_API_FALLBACK and config.ANTHROPIC_API_KEY):
+                raise RuntimeError(f"ChatGPT 구독(Codex) 호출 실패: {e}") from e
+            print(f"  (Codex 실패 → Anthropic API 로 대체: {str(e)[:100]})")
     client = get_client()
     last = None
     for attempt in range(2):  # 총 2회(각 회마다 SDK 가 추가로 자동 재시도) — 무한 펜딩 방지

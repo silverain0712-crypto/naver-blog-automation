@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import config
 from modules.freshness import freshness_rule
-from modules.llm import get_client, _RETRYABLE
+from modules.llm import _RETRYABLE, available as llm_available, search_text
 
 _SKIP_MARK = "벤치마킹 불필요"
 _MAX_SEARCHES = 6
@@ -48,7 +48,7 @@ _SYSTEM = (
 
 def benchmark(*, keyword: str, memo: str, structure_label: str = "", guideline: str = "") -> str:
     """글감으로 상위노출 벤치마킹 메모를 만든다. 필요 없거나 실패하면 빈 문자열."""
-    if not config.ENABLE_BENCHMARK or not config.ANTHROPIC_API_KEY:
+    if not config.ENABLE_BENCHMARK or not llm_available():
         return ""
 
     prompt = (
@@ -63,22 +63,14 @@ def benchmark(*, keyword: str, memo: str, structure_label: str = "", guideline: 
         "따라야 할 구조와 이길 차별화 포인트를 정리해줘."
     )
 
-    client = get_client()
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": _MAX_SEARCHES}]
-
     last = None
     for attempt in range(2):
         try:
-            resp = client.messages.create(
+            text = search_text(
                 model=config.BENCHMARK_MODEL,
-                max_tokens=2000,
                 system=_SYSTEM + "\n\n" + freshness_rule(),
-                messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-                tools=tools,
+                prompt=prompt, max_tokens=2000, max_uses=_MAX_SEARCHES,
             )
-            text = "".join(
-                b.text for b in resp.content if getattr(b, "type", "") == "text"
-            ).strip()
             if not text or text.startswith(_SKIP_MARK):
                 return ""
             return text
