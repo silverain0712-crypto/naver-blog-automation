@@ -126,8 +126,14 @@ class CardImageError(RuntimeError):
     pass
 
 
-def enabled() -> bool:
+def _hf_enabled() -> bool:
+    """힉스필드 개발자 API 키(Soul 사진 생성용)가 있는지."""
     return bool(config.HF_API_KEY and config.HF_API_SECRET)
+
+
+def enabled() -> bool:
+    """카드·사진을 만들 수 있는 백엔드가 하나라도 있는지(Codex=GPT Pro 구독 또는 힉스필드 키)."""
+    return _hf_enabled() or _codex_enabled()
 
 
 def _font(size: int, prefer: str | None = None) -> ImageFont.FreeTypeFont:
@@ -220,7 +226,29 @@ def _gpt_client():
     return OpenAI(api_key=config.OPENAI_API_KEY)
 
 
+def _codex_enabled() -> bool:
+    if config.IMAGE_BACKEND != "codex":
+        return False
+    from modules import codex_image
+    return codex_image.available()
+
+
 def _gpt_generate(prompt: str) -> bytes:
+    """텍스트가 들어가는 카드 1장. 기본은 ChatGPT 구독(Codex) — 크레딧 0.
+    Codex 가 안 되면 OpenAI API 로 넘어가지 않고 실패시킨다(ALLOW_OPENAI_IMAGE_FALLBACK=1 일 때만 API 사용)."""
+    if config.IMAGE_BACKEND == "codex":
+        from modules import codex_image
+        err = None
+        if codex_image.available():
+            try:
+                return codex_image.generate(prompt + "\n\nCanvas: portrait 4:5 aspect ratio.")
+            except codex_image.CodexImageError as e:
+                err = str(e)
+        else:
+            err = "Codex CLI 설치/ChatGPT 로그인이 안 돼 있습니다(`codex login`)."
+        if not config.ALLOW_OPENAI_IMAGE_FALLBACK:
+            raise CardImageError(f"Codex(GPT Pro) 이미지 생성 실패: {err}")
+        print(f"  (Codex 실패 → OpenAI API 로 대체: {err[:80]})")
     client = _gpt_client()
     try:
         resp = client.images.generate(
@@ -428,7 +456,7 @@ def _compose_checklist(spec: CardSpec) -> bytes:
 
 
 def _generate_background(prompt: str) -> bytes:
-    if not enabled():
+    if not _hf_enabled():
         raise CardImageError("HF_API_KEY/HF_API_SECRET 가 없습니다(.env 확인).")
     import urllib.request
     import higgsfield_client as hc
@@ -465,22 +493,49 @@ def _fetch_stock_photo(query: str) -> bytes | None:
         return None
 
 
+_PHOTO_STYLE = (
+    "Photorealistic candid lifestyle photograph, portrait 4:5, bright natural window light, "
+    "warm and cozy. People must have natural Korean features and the setting is a typical bright "
+    "Korean apartment or Korean daily-life location. Absolutely no text, letters, numbers, logos or "
+    "readable signage anywhere; any phone, laptop or TV screen must be blurred and unreadable. "
+    "Natural skin texture, natural hands, no plastic look."
+)
+
+
+def _generate_photo_gpt(prompt: str) -> bytes | None:
+    """GPT(Codex, 구독)로 실사 1장. 안 되면 None(호출부가 힉스필드·스톡으로 넘어간다)."""
+    if not _codex_enabled():
+        return None
+    from modules import codex_image
+    try:
+        return codex_image.generate(f"{_PHOTO_STYLE}\n\nScene: {prompt}")
+    except codex_image.CodexImageError as e:
+        print(f"  (Codex 사진 생성 실패, 다음 방법으로: {str(e)[:100]})")
+        return None
+
+
 def _compose_lifestyle(spec: CardSpec) -> bytes:
-    """실사 1장. 무료 스톡(Unsplash)을 먼저 찾고, 없으면 힉스필드로 생성한다.
+    """실사 1장. 2026-11-04 순서 변경: ① GPT(Codex·구독) 생성 → ② 힉스필드 Soul → ③ 무료 스톡.
+    (이전엔 스톡이 1순위였는데 서양식 사진이 많고 퀄리티가 낮아 홈판 글에 안 맞았다.)
     문구는 얹지 않는다(유저 요청: 사진만 있으면 된다) — 캡션은 blog 본문 쪽에서 다룬다.
 
     재생성(피드백 있음)일 땐 스톡을 다시 무작위로 뽑는 대신 곧장 힉스필드 생성으로
     가서 피드백을 반영한다 — 스톡 검색은 같은 검색어로도 다른 사진을 못 고르게 할 수
     있어 '이전과 다르게 해달라'는 피드백 의도에 안 맞는다."""
     fb = spec.feedback.strip()
-    bg_bytes = None if fb else _fetch_stock_photo(spec.stock_query)
+    prompt = spec.bg_prompt.strip()
+    if prompt and fb:
+        prompt = f"{prompt} Additional requested change: {fb}."
+    bg_bytes = _generate_photo_gpt(prompt) if prompt else None
+    if bg_bytes is None and prompt and _hf_enabled():
+        try:
+            bg_bytes = _generate_background(prompt)
+        except CardImageError as e:
+            print(f"  (힉스필드 사진 생성 실패, 스톡으로: {str(e)[:100]})")
+    if bg_bytes is None and not fb:
+        bg_bytes = _fetch_stock_photo(spec.stock_query)
     if bg_bytes is None:
-        prompt = spec.bg_prompt.strip()
-        if not prompt:
-            raise CardImageError("스톡 사진을 못 찾았고 대체 생성 프롬프트도 없습니다.")
-        if fb:
-            prompt = f"{prompt} Additional requested change: {fb}."
-        bg_bytes = _generate_background(prompt)
+        raise CardImageError("사진을 만들지도(GPT·힉스필드), 스톡에서 찾지도 못했습니다.")
     bg = ImageOps.exif_transpose(Image.open(io.BytesIO(bg_bytes)))
     canvas = _cover_crop(bg, SIZE_W, SIZE_H).convert("RGB")
     buf = io.BytesIO()
@@ -504,24 +559,28 @@ def make_cards(specs: list) -> list:
     받는다(OPENAI_API_KEY 필요). role == "lifestyle" 만 힉스필드 배경이 필요하다
     (enabled() 아니면 건너뛴다).
     """
-    cards: list = []
-    for spec in specs:
+    def _one(spec):
         try:
             if spec.role == "lifestyle":
-                # 스톡(Unsplash)만으로도 만들 수 있으니 힉스필드 키 없다고 건너뛰지 않는다.
-                # 스톡도 없고 힉스필드도 없으면 _compose_lifestyle 이 CardImageError 를 낸다.
+                # 사진은 GPT(Codex)→힉스필드→스톡 순(_compose_lifestyle). 모두 실패하면 CardImageError.
                 data = _compose_lifestyle(spec)
             else:
                 composer = _COMPOSERS.get(spec.role, _compose_card)
                 data = composer(spec)
         except CardImageError as e:
             print(f"  (카드 {spec.key}/{spec.role} 실패, 건너뜀: {str(e)[:100]})")
-            continue
+            return None
         except Exception as e:
             # 실측(2026-08-31): 여길 조용히 넘기면 개수만 줄고 로그에 원인이 안 남는다.
             print(f"  (카드 {spec.key}/{spec.role} 렌더링 오류, 건너뜀: {type(e).__name__}: {str(e)[:100]})")
-            continue
-        cards.append(Card(spec.key, data))
+            return None
+        return Card(spec.key, data)
+
+    # Codex 는 장당 약 80초라 순차로 10장이면 13분이 넘는다 — 동시 실행 수는 codex_image 의 세마포어
+    # (CODEX_IMAGE_WORKERS, 기본 2)가 제한하므로 스레드는 넉넉히 열고 결과 순서만 지킨다.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max(1, min(len(specs), 6))) as ex:
+        cards = [c for c in ex.map(_one, specs) if c is not None]
     if not cards:
         raise CardImageError("카드를 한 장도 만들지 못했습니다.")
     return cards

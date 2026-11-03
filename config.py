@@ -21,6 +21,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()        # DALL-E 3 이미지 생성
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "").strip()  # 무료 스톡 사진 검색
+# 카드뉴스·홈판 사진 생성 백엔드(modules/card_images.py).
+#  "codex"  = ChatGPT 구독(GPT Pro)의 Codex CLI — 장당 크레딧 0, 장당 약 80초(modules/codex_image.py)
+#  "openai" = OpenAI API(gpt-image-2) — 장당 과금
+# codex 가 실패했을 때 OpenAI API 로 몰래 넘어가 과금되는 걸 막기 위해, 그 대체는 명시적으로 켠 때만 한다.
+IMAGE_BACKEND = os.getenv("IMAGE_BACKEND", "codex").strip().lower()
+ALLOW_OPENAI_IMAGE_FALLBACK = os.getenv("ALLOW_OPENAI_IMAGE_FALLBACK", "").strip().lower() in ("1", "true", "yes")
 HF_API_KEY = os.getenv("HF_API_KEY", "").strip()   # 힉스필드(카드뉴스 배경 이미지 생성)
 HF_API_SECRET = os.getenv("HF_API_SECRET", "").strip()
 # 핸드폰/네트워크 접속 시 보호용 비밀번호(설정하면 잠금, 비우면 잠금 없음)
