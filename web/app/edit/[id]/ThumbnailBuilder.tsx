@@ -2,38 +2,38 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// ── 비비 고정 템플릿 상수 ──
-// 미리캔버스 원본 썸네일 3장을 픽셀 측정해서 맞춘 값이다(잉크 박스 기준).
-// 좌표는 '글자가 실제로 칠해지는 영역'을 뜻하며, baseline 이 아니다 — drawInk() 참고.
+// ── 비비 썸네일 템플릿 상수(2026-09-02 개편) ──
+// 유저가 준 레퍼런스 스타일: 사진이 캔버스 전체를 꽉 채우고(정방형·가로형 모두 안 깨짐),
+// 좌하단에 흰 배경 해시태그 알약 2개 + 흰 글자(검정 외곽선) 2줄 제목. 카톡 공유 등
+// 캔버스가 잘리거나 축소돼도 사진이 커서 무너지지 않는다(예전 아치+크림 여백 템플릿의
+// "카톡 공유하면 스타일이 깨진다"는 문제를 해결하려고 바꾼 것).
 const S = 1080;
-const BG = "#EEE9E3"; // 크림 배경 (238,233,227)
-const ACCENT = "#568A35"; // @bbnation / REVIEW / 가로선 (86,138,53)
-const TITLE_C = "#41661B"; // 하단 제목 (65,102,27)
-// 아치: 원본은 캔버스 정중앙이 아니라 살짝 오른쪽(중심 551)이고 하단 모서리는 직각이다.
-const ARCH_X = 195;
-const ARCH_W = 713;
-const ARCH_TOP = 105;
-const ARCH_BOTTOM = 855;
-const BRAND_SIZE = 25;
-const BRAND_INK_X = 35; // '@' 왼쪽 끝이 닿는 x
-const BRAND_CY = 54; // 잉크 세로 중심
-// 원본 REVIEW 는 획 대비가 큰 세리프체(가나초콜릿 아님)라 폭·높이를 동시에 맞출 수 없다.
-// 세로로 늘려 맞춰봤더니 글자가 찌그러져 어색해서, 늘리지 않고 높이만 비슷하게 키운다.
-// 원본 폰트를 확보하면 이 값들 대신 그 폰트를 심으면 된다.
-const REVIEW_SIZE = 42;
-const REVIEW_INK_RIGHT = 1018; // 'W' 오른쪽 끝이 닿는 x
-const REVIEW_CY = 75;
-// 원본 실측: 선은 @bbnation 뒤(195)부터 REVIEW 오른쪽 끝(1016)까지 쭉 이어지고,
-// REVIEW 는 그 선 아래에 윗변이 닿게 놓인다. 두께는 2px.
-const LINE_Y = 57;
-const LINE_X0 = 195;
-const LINE_X1 = 1016;
-const LINE_W = 2;
-const TITLE_SIZE = 70;
-const TITLE_STEP = 114;
-const TITLE_CENTER_Y = 966;
-const TITLE_MAX_W = 980; // 넘치면 자동으로 줄인다(원본은 손으로 맞췄지만 여긴 자동)
-const FONT = "Ghanachocolate";
+const MARGIN = 56; // 좌측 정렬 기준(해시태그·제목 공통)
+// 2026-09-02: 유저 레퍼런스 이미지 폰트로 교체 — 공게임즈 "이사만루체" Light(= "공체 Light").
+// 상업적 사용 무료(임의 수정 후 유료 판매만 금지). 눈누(noonnu.cc/font_page/463) 경유로
+// 공식 배포처(gonggames.com)에서 받았다.
+const FONT = "IsamanruLight";
+
+// 2026-09-02: 레퍼런스 이미지(1080x1080, 우리 캔버스와 동일 크기)를 픽셀 단위로 실측해
+// 아래 값들을 보정했다 — 텍스트 잉크 영역의 y 범위/x 범위를 감지하고, 실제 폰트 파일로
+// 여러 크기를 렌더링해 잉크 높이·폭이 실측치와 가장 가까운 값을 역산했다(제목 72px).
+
+// 해시태그 알약(좌하단, 제목 위) — 실측: 알약 밴드 y 745~795(높이 51), x 시작 50.
+const PILL_Y = 745; // 알약 위쪽 y
+const PILL_H = 50;
+const PILL_GAP = 12; // 알약 사이 간격
+const PILL_PAD_X = 24;
+const PILL_FONT_SIZE = 27;
+const PILL_BG = "rgba(255,255,255,0.94)";
+const PILL_TEXT_C = "#1a1a1a";
+
+// 제목 2줄 — 외곽선/그림자 없이 흰 글자만. 실측: 두 줄 다 폰트 크기 72px 에서 잉크
+// 높이·폭이 레퍼런스와 가장 가깝게 일치(줄마다 크기 차이 없음 — 위계는 없다).
+const TITLE_SIZE = 72;
+const TITLE_LINE_GAP = 30; // 줄 사이 여백(실측: 줄 중심 간 거리 - 폰트 크기)
+const TITLE_BOTTOM_Y = 980; // 마지막 줄 잉크 중심 y(실측)
+const TITLE_MAX_W = 980; // 넘치면 자동으로 줄인다
+const TITLE_FILL = "#ffffff";
 
 const THUMB_PATH_SUFFIX = "/thumb.png"; // `${id}/thumb.png`
 
@@ -41,19 +41,21 @@ type Props = {
   draftId: string;
   images: string[]; // 이미 올라간 사진 경로들
   candidates: string[][]; // 문구 후보(각 후보 = 1~2줄)
+  hashtags: string[]; // AI가 정한 해시태그(# 없이) — 알약 기본값
   // apply 시점의 최신 본문/데이터는 함수로 받아 클로저 캡처 문제를 피한다.
   getBody: () => string;
   getData: () => Record<string, unknown>;
   onApplied: (newBody: string, newImages: string[], newData: Record<string, unknown>) => void;
 };
 
-function archPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
-  const r = w / 2; // 상단 반원 반지름
+function pillPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  const r = h / 2;
   ctx.beginPath();
-  ctx.moveTo(x, y + r);
-  ctx.arc(x + r, y + r, r, Math.PI, 2 * Math.PI, false); // 상단 반원(좌→위→우)
-  ctx.lineTo(x + w, y + h); // 하단은 직각(원본과 동일)
-  ctx.lineTo(x, y + h);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
 
@@ -111,6 +113,7 @@ export default function ThumbnailBuilder({
   draftId,
   images,
   candidates,
+  hashtags,
   getBody,
   getData,
   onApplied,
@@ -121,16 +124,19 @@ export default function ThumbnailBuilder({
   const [phrase, setPhrase] = useState<string>(() =>
     candidates[0] ? candidates[0].join("\n") : "",
   );
+  // 알약 해시태그 2개 — AI가 정한 해시태그 앞 2개를 기본값으로, 직접 수정 가능.
+  const [tag1, setTag1] = useState<string>(hashtags[0] ?? "");
+  const [tag2, setTag2] = useState<string>(hashtags[1] ?? "");
   const [thumbUrls, setThumbUrls] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [open, setOpen] = useState(false);
 
-  // 가나초콜릿체 로드(썸네일 만들 때만 — lazy)
+  // 이사만루체 Light 로드(썸네일 만들 때만 — lazy)
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    const ff = new FontFace(FONT, "url(/fonts/Ghanachocolate.woff2)");
+    const ff = new FontFace(FONT, "url(/fonts/IsamanruLight.woff2)");
     ff.load()
       .then((f) => {
         document.fonts.add(f);
@@ -155,7 +161,7 @@ export default function ThumbnailBuilder({
     };
   }, [open, draftId, images.length]);
 
-  // 캔버스 렌더
+  // 캔버스 렌더 — 사진이 캔버스 전체를 채우고, 좌하단에 해시태그 알약 + 2줄 제목.
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -163,61 +169,55 @@ export default function ThumbnailBuilder({
     if (!ctx) return;
 
     ctx.clearRect(0, 0, S, S);
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, S, S);
 
-    // 헤더: @bbnation + 가로선 + REVIEW
-    ctx.fillStyle = ACCENT;
-    ctx.strokeStyle = ACCENT;
+    // 사진: 캔버스 전체를 cover-crop(정방형·가로형 어느 쪽으로 잘려도 사진이 크게 남는다)
+    if (bitmap) {
+      drawCover(ctx, bitmap, 0, 0, S, S);
+    } else {
+      ctx.fillStyle = "#E2DCD0"; // 사진 미선택 placeholder
+      ctx.fillRect(0, 0, S, S);
+    }
+
     ctx.textBaseline = "alphabetic";
     ctx.textAlign = "left";
 
-    ctx.font = `${BRAND_SIZE}px "${FONT}", sans-serif`;
-    const b = drawInk(ctx, "@bbnation", BRAND_CY, { left: BRAND_INK_X });
-    ctx.fillText("@bbnation", b.x, b.y);
-
-    ctx.font = `${REVIEW_SIZE}px "${FONT}", sans-serif`;
-    const r = drawInk(ctx, "REVIEW", REVIEW_CY, { right: REVIEW_INK_RIGHT });
-    ctx.fillText("REVIEW", r.x, r.y);
-
-    ctx.lineWidth = LINE_W;
-    ctx.beginPath();
-    ctx.moveTo(LINE_X0, LINE_Y);
-    ctx.lineTo(LINE_X1, LINE_Y);
-    ctx.stroke();
-
-    // 아치 사진(cover-crop → 아치 마스크)
-    const boxH = ARCH_BOTTOM - ARCH_TOP;
-    ctx.save();
-    archPath(ctx, ARCH_X, ARCH_TOP, ARCH_W, boxH);
-    if (bitmap) {
-      ctx.clip();
-      drawCover(ctx, bitmap, ARCH_X, ARCH_TOP, ARCH_W, boxH);
-    } else {
-      ctx.fillStyle = "#E2DCD0"; // 사진 미선택 placeholder
-      ctx.fill();
+    // 해시태그 알약(흰 배경 + 검정 글자), 좌측부터 나란히
+    const tags = [tag1, tag2].map((t) => t.trim()).filter(Boolean);
+    if (tags.length > 0) {
+      ctx.font = `${PILL_FONT_SIZE}px "${FONT}", sans-serif`;
+      let x = MARGIN;
+      for (const t of tags) {
+        const label = t.startsWith("#") ? t : `#${t}`;
+        const w = ctx.measureText(label).width + PILL_PAD_X * 2;
+        ctx.fillStyle = PILL_BG;
+        pillPath(ctx, x, PILL_Y, w, PILL_H);
+        ctx.fill();
+        ctx.fillStyle = PILL_TEXT_C;
+        const ink = drawInk(ctx, label, PILL_Y + PILL_H / 2, { left: x + PILL_PAD_X });
+        ctx.fillText(label, ink.x, ink.y);
+        x += w + PILL_GAP;
+      }
     }
-    ctx.restore();
 
-    // 하단 제목(초록, 가운데, 1~2줄). 폭이 넘치면 자동 축소.
+    // 제목 2줄, 좌측 정렬, 흰 글자만(외곽선·그림자 없음). 두 줄 다 같은 크기(55px).
     const lines = splitLines(phrase);
-    ctx.fillStyle = TITLE_C;
-    ctx.strokeStyle = TITLE_C;
-    ctx.textAlign = "center";
-    ctx.lineWidth = 1.5;
+    ctx.fillStyle = TITLE_FILL;
+
+    // 폭 넘치면 축소
     let size = TITLE_SIZE;
     ctx.font = `${size}px "${FONT}", sans-serif`;
     const widest = Math.max(0, ...lines.map((l) => ctx.measureText(l).width));
     if (widest > TITLE_MAX_W) size = Math.floor((size * TITLE_MAX_W) / widest);
     ctx.font = `${size}px "${FONT}", sans-serif`;
-    const step = (TITLE_STEP * size) / TITLE_SIZE;
-    const start = TITLE_CENTER_Y - ((lines.length - 1) * step) / 2;
+
+    // 아래→위로 쌓는다(마지막 줄을 TITLE_BOTTOM_Y 에 고정).
+    const step = size + TITLE_LINE_GAP;
+    const start = TITLE_BOTTOM_Y - (lines.length - 1) * step;
     lines.forEach((ln, i) => {
-      const t = drawInk(ctx, ln, start + i * step, { center: S / 2 });
+      const t = drawInk(ctx, ln, start + i * step, { left: MARGIN });
       ctx.fillText(ln, t.x, t.y);
-      ctx.strokeText(ln, t.x, t.y); // 살짝 두껍게(원본 굵기 재현)
     });
-  }, [bitmap, phrase]);
+  }, [bitmap, phrase, tag1, tag2]);
 
   useEffect(() => {
     if (open) draw();
@@ -277,16 +277,32 @@ export default function ThumbnailBuilder({
       const base = (images || []).filter((p) => !p.endsWith(THUMB_PATH_SUFFIX));
       const n = base.length + 1; // 우리 마커 번호(항상 사진들보다 큼 → 충돌 없음)
       const marker = `[사진${n}]`;
-      // 대표사진 자리 = 인사말('안녕하세요 … 비비') 바로 아래.
-      // 본문 맨 위(=인사말 앞)는 발행기가 '큰 제목/요약' 블록으로 파싱하는 구간이라
-      // 거기에 마커를 두면 사진 대신 '[사진N]' 글자가 제목으로 찍힌다.
+      // 대표사진 자리 = 큰 제목/요약 블록 바로 아래(요약 뒤 빈 줄 다음, 도입부 앞).
+      // 본문 맨 위(=그 빈 줄 앞)는 발행기가 '큰 제목/요약' 블록으로 파싱하는 구간이라
+      // 거기에 마커를 두면 사진 대신 '[사진N]' 글자가 제목으로 찍힌다. 모델이 가끔
+      // 키워드 한 줄 뒤에도 빈 줄을 넣어서, 본문 줄이 최소 2줄 나온 뒤의 빈 줄만
+      // 경계로 인정한다(mac_generator.py _intro_boundary 와 동일한 기준).
       const lines = body.split("\n").filter((line) => line.trim() !== marker);
-      const gi = lines.findIndex((l) => l.includes("안녕하세요") && l.includes("비비"));
-      if (gi >= 0) lines.splice(gi + 1, 0, "", marker);
+      let gi = -1;
+      let seen = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim() === "") {
+          if (seen >= 2) {
+            gi = i;
+            break;
+          }
+        } else {
+          seen += 1;
+        }
+      }
+      if (gi >= 0) lines.splice(gi + 1, 0, marker, "");
       else lines.unshift(marker, "");
       const newBody = lines.join("\n");
       const newImages = [...base, path];
-      const newData = { ...data, thumb: { path, marker: n } };
+      const newData = {
+        ...data,
+        thumb: { path, marker: n, phrase, tags: [tag1, tag2].map((t) => t.trim()).filter(Boolean) },
+      };
 
       const patch = await fetch(`/api/drafts/${draftId}`, {
         method: "PATCH",
@@ -348,17 +364,36 @@ export default function ThumbnailBuilder({
           ))}
         </div>
       )}
-      <p className="mb-1 text-xs text-neutral-400">문구(줄바꿈 = 2줄, 각 줄 10자 안팎). 직접 수정 가능.</p>
+      <p className="mb-1 text-xs text-neutral-400">
+        문구(줄바꿈 = 2줄, 아래 줄이 더 크게 나와요). 직접 수정 가능.
+      </p>
       <textarea
         value={phrase}
         onChange={(e) => setPhrase(e.target.value)}
         rows={2}
-        placeholder={"예: 제주 아르떼 키즈파크\n16개월 비추"}
+        placeholder={"예: 이곳에 가면 꼭 먹고 싶다!\nBEST 7"}
         className={`${fieldC} mb-3`}
       />
 
-      {/* 중앙 이미지 선택 */}
-      <p className="mb-1 text-xs font-medium text-neutral-600">가운데 이미지</p>
+      {/* 해시태그 알약 2개 */}
+      <p className="mb-1 text-xs font-medium text-neutral-600">해시태그 알약(최대 2개)</p>
+      <div className="mb-3 flex gap-2">
+        <input
+          value={tag1}
+          onChange={(e) => setTag1(e.target.value)}
+          placeholder="도시여행"
+          className={`${fieldC} text-sm`}
+        />
+        <input
+          value={tag2}
+          onChange={(e) => setTag2(e.target.value)}
+          placeholder="미식여행"
+          className={`${fieldC} text-sm`}
+        />
+      </div>
+
+      {/* 배경 사진 선택 */}
+      <p className="mb-1 text-xs font-medium text-neutral-600">배경 사진(캔버스 전체를 채워요)</p>
       {thumbUrls.length > 0 && (
         <div className="mb-2 grid grid-cols-5 gap-1">
           {thumbUrls.map((u, i) => (
