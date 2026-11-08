@@ -99,7 +99,13 @@ export async function POST(req: NextRequest) {
     }
 
     // 상품 링크로 상세컷도 만들지 여부. 맥 생성기가 data.image_job 을 보고 처리한다.
-    const wantShots = Boolean(b.generateShots) && Boolean(request.product_link);
+    // 사진을 한 장도 안 올린 제품 소개글(비경험형)은 체크 안 해도 자동으로 만든다 — 직접 쓴 적 없는
+    // 제품이라 상세컷과 사용 장면이 있어야 글이 선다. 사진이 있으면(경험형) 체크했을 때만, 상세컷만.
+    const introNoPhotos = request.structure_key === "product" && photoCount === 0;
+    const wantShots = (Boolean(b.generateShots) || introNoPhotos) && Boolean(request.product_link);
+    const shotJob = introNoPhotos
+      ? { status: "requested", count: 5, include_use: true, feedback: "", error: "" }
+      : { status: "requested", count: 3, include_use: false, feedback: "", error: "" };
 
     const needUpload = photoCount > 0 || guidelineUploads.length > 0 || videoCount > 0;
     await insertDraft({
@@ -119,7 +125,7 @@ export async function POST(req: NextRequest) {
         },
         videos: [],
         ...(wantShots
-          ? { image_job: { status: "requested", count: 3, feedback: "", error: "" } }
+          ? { image_job: shotJob }
           : {}),
       },
       images: imagePaths,

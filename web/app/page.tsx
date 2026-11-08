@@ -280,7 +280,11 @@ export default function NewPostPage() {
   // 가이드/설명서 파일 추가(입력/드롭 공용) — 여러 개 누적. 이미지 필터는 두지 않는다(엑셀·PDF 등).
   function addGuideFiles(list: FileList | null) {
     if (!list || list.length === 0) return;
-    setGuideFiles((prev) => [...prev, ...Array.from(list)]);
+    // FileList 는 살아있는 객체라 입력값을 비우면(e.currentTarget.value="") 같이 비워진다. setState 업데이터는
+    // 나중에 실행되므로 반드시 먼저 배열로 복사해 둬야 한다 — 안 그러면 첨부가 조용히 사라진다(2026-11-08).
+    const picked = Array.from(list);
+    if (picked.length === 0) return;
+    setGuideFiles((prev) => [...prev, ...picked]);
   }
   function removeGuideFile(i: number) {
     setGuideFiles((prev) => prev.filter((_, idx) => idx !== i));
@@ -495,6 +499,10 @@ export default function NewPostPage() {
       setErr("메모나 사진, 동영상 중 하나는 넣어주세요.");
       return;
     }
+    // 메모엔 '가이드 참고'라고 썼는데 가이드 파일·텍스트가 비어 있으면 그대로 생성되어 가이드가 통째로 빠진다(2026-11-08 실측).
+    if (/가이드/.test(memo) && guideFiles.length === 0 && !guideText.trim()) {
+      if (!window.confirm("메모에 '가이드'라고 썼는데 첨부된 가이드가 없어요.\n가이드 없이 그대로 만들까요? (취소하면 돌아가서 첨부할 수 있어요)")) return;
+    }
     setBusy(true);
     try {
       const id = await uploadAssets(meta);
@@ -632,9 +640,10 @@ export default function NewPostPage() {
           <label className="mt-1 flex items-start gap-2 text-sm text-neutral-600">
             <input type="checkbox" name="generate_shots" className="mt-1" />
             <span>
-              이 링크로 <strong className="font-medium">상품 상세컷 3장</strong>도 만들기
+              이 링크로 <strong className="font-medium">상품 상세컷</strong>도 만들기
               <span className="block text-xs text-neutral-500">
-                실제 상품 사진을 가져와 그 제품 그대로 만듭니다. 직접 찍으셨으면 체크 안 해도 됩니다.
+                실제 상품 사진을 가져와 그 제품 그대로 만듭니다. 사진을 안 올린 제품 소개글이면 체크
+                안 해도 상세컷 + 사용 장면 5장이 자동으로 만들어져요(사용 장면은 AI 생성 표시).
               </span>
             </span>
           </label>

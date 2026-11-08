@@ -150,14 +150,32 @@ export default function ProductShots({ id, productLink, onSaveLink }: Props) {
                 직접 찍은 사진이 있으면 안 만드셔도 됩니다.
               </p>
 
-              <button
-                type="button"
-                onClick={() => request({ count: 3 })}
-                disabled={busy}
-                className="w-full rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {busy ? "만드는 중… (1~2분)" : hasShots ? "새로 3장 만들기" : "상세컷 3장 만들기 ✨"}
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => request({ count: 5, include_use: true })}
+                  disabled={busy}
+                  className="w-full rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {busy
+                    ? "만드는 중… (3~5분)"
+                    : hasShots
+                      ? "상세컷 + 사용 장면 5장 새로 만들기 ✨"
+                      : "상세컷 + 사용 장면 5장 만들기 ✨"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => request({ count: 3, include_use: false })}
+                  disabled={busy}
+                  className="w-full rounded-lg border border-neutral-300 px-4 py-2 text-xs font-medium disabled:opacity-50"
+                >
+                  상세컷만 3장 (직접 써본 제품일 때)
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-neutral-400">
+                사용 장면은 AI가 만든 예시 이미지라 캡션에 &lsquo;AI 생성 이미지&rsquo;가 표시돼요. 직접 써본
+                것처럼 쓰지 않도록 글도 소개형으로 유지돼요.
+              </p>
 
               {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
               {job?.status === "error" && job.error && (

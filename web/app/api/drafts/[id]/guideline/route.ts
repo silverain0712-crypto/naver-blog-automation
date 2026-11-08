@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDraft, createSignedDownloads } from "@/lib/db";
+import { getDraft, createSignedDownloads, createSignedUpload } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -31,6 +31,31 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     }));
 
     return NextResponse.json({ files, text });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+// POST /api/drafts/[id]/guideline  { names: string[] } → 가이드 파일 재첨부용 서명 업로드 URL.
+// 폰이 이 URL 로 직접 PUT 한 뒤 PATCH /api/drafts/[id] 로 data.request.guideline_* 를 갱신한다.
+// 경로는 매번 새로 만든다(예전 파일을 덮어쓰지 않아 업로드가 중간에 끊겨도 기존 가이드가 안 깨진다).
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  try {
+    const draft = await getDraft(id);
+    if (!draft) return NextResponse.json({ error: "not found" }, { status: 404 });
+    const b = (await req.json()) as { names?: unknown };
+    const names = Array.isArray(b.names) ? b.names.map((n) => String(n).trim()).filter(Boolean) : [];
+    if (names.length === 0) return NextResponse.json({ error: "names required" }, { status: 400 });
+    const stamp = Date.now();
+    const uploads: { name: string; path: string; url: string }[] = [];
+    for (let i = 0; i < names.length; i++) {
+      const nm = names[i];
+      const ext = nm.includes(".") ? nm.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "") : "bin";
+      const path = `${id}/guideline_${stamp}_${i + 1}.${ext || "bin"}`;
+      uploads.push({ name: nm, path, url: await createSignedUpload(path) });
+    }
+    return NextResponse.json({ uploads });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

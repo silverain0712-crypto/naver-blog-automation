@@ -93,6 +93,23 @@ export default function ListPage() {
                   })}
                   {d.images?.length ? ` · 사진 ${d.images.length}` : ""}
                 </p>
+                {(() => {
+                  const rq = d.data?.request;
+                  const gn: string[] = Array.isArray(rq?.guideline_names) ? rq.guideline_names : [];
+                  const hasText = Boolean(rq?.guideline_text);
+                  if (gn.length > 0 || hasText) {
+                    return (
+                      <p className="mt-0.5 truncate text-xs text-emerald-600">
+                        📋 가이드 {gn.length > 0 ? gn.join(", ") : "(직접 입력)"}
+                        {gn.length > 0 && hasText ? " + 직접 입력" : ""}
+                      </p>
+                    );
+                  }
+                  if (rq?.is_sponsored) {
+                    return <p className="mt-0.5 text-xs text-amber-600">⚠️ 협찬인데 가이드 없음</p>;
+                  }
+                  return null;
+                })()}
                 {d.status === "error" && d.data?.error && (
                   <p className="mt-0.5 truncate text-xs text-red-500">{d.data.error}</p>
                 )}

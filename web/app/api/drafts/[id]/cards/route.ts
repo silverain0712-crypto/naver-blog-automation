@@ -55,7 +55,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   }
 }
 
-// POST /api/drafts/[id]/cards → { target: photo_number, feedback } 로 그 카드 한 장만
+// POST /api/drafts/[id]/cards → { target: photo_number, feedback? } 로 그 카드 한 장만
 // 자동 생성 당시 내용은 그대로 두고 피드백만 반영해 다시 만들도록 맥에 신호를 보낸다.
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -69,9 +69,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (target === undefined) {
       return NextResponse.json({ error: "target이 필요합니다." }, { status: 400 });
     }
-    if (!feedback) {
-      return NextResponse.json({ error: "고치고 싶은 점을 적어주세요." }, { status: 400 });
-    }
+    // 피드백이 비어 있으면 '같은 내용으로 다시 뽑기'(마음에 안 들 때 한 번 더) — 허용한다.
     const specs = specsOf(draft.data);
     if (!specs.some((s) => s.photo_number === target)) {
       return NextResponse.json({ error: "자동 생성된 카드가 아닙니다." }, { status: 400 });

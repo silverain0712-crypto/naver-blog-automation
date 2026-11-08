@@ -56,11 +56,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       }
     }
 
-    const count = Math.max(1, Math.min(4, Number(body.count) || 3));
+    const count = Math.max(1, Math.min(6, Number(body.count) || 3));
+    const include_use = Boolean(body.include_use);
     await updateDraft(id, {
       data: {
         ...(draft.data ?? {}),
-        image_job: { status: "requested", count, target, feedback, error: "" },
+        image_job: { status: "requested", count, include_use, target, feedback, error: "" },
       },
     });
     return NextResponse.json({ ok: true });

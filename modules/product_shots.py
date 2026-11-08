@@ -8,6 +8,9 @@
 **제품이 프레임에서 차지하는 크기** 문제였다. 멀리서 잡는 플랫레이는 문구가 전부
 무너지고, 제품이 화면을 채우면 원본과 글자 단위로 일치한다. 그래서 모든 구도가
 "제품이 프레임을 채운다"를 전제로 짜여 있다.
+
+2026-11-04: ① 생성을 Gemini API(건당 과금) → Codex(ChatGPT 구독, 레퍼런스 사진 첨부)로 옮겼다 — 라벨 글자·
+형태·그래픽이 원본과 일치함을 실측. ② 미사용(소개형) 제품 글용 '사용 장면' 컷(손만 등장)을 추가했다.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ import config
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 _TIMEOUT = 180
 
-# 모든 컷에 공통으로 붙는 조건. 제품 동일성과 안전(사람 미등장)을 여기서 고정한다.
+# 모든 상세컷에 공통으로 붙는 조건. 제품 동일성과 안전(사람 미등장)을 여기서 고정한다.
 _COMMON = (
     "Keep the product itself identical to the reference image — same shape, same colors, "
     "same materials, same label text and layout. Do not redesign or restyle the product. "
@@ -40,29 +43,66 @@ _COMMON = (
 # "STERLING 923"으로 나오거나, 아예 존재하지 않는 한글 각인을 만들어낸 사례). 그래서
 # "안 보이면 지어내지 말고 비워둬라"를 명시적으로 지시한다.
 
-# 상세컷 구도. 이 순서대로 count 만큼 쓴다.
+# 사용 장면 공통 조건(2026-11-04) — 미사용(소개형) 제품 글에서 '이 제품을 이렇게 쓴다'를 보여주는 컷.
+# 제품은 레퍼런스와 같게, 사람은 손만(얼굴·알아볼 수 있는 사람 금지). 레퍼런스에 모델 얼굴이
+# 있어도 따라 그리지 않게 못 박는다(몽디에스 로션 레퍼런스로 실측: 손만 나왔다).
+_COMMON_USE = (
+    "Keep the product itself identical to the reference image — same shape, same colors, same "
+    "materials, same label text and graphics. Do not redesign the product. "
+    "Realistic candid lifestyle photograph in a bright, tidy Korean home or everyday Korean setting, "
+    "natural window light, shallow depth of field, authentic everyday snapshot feel, vertical 4:5. "
+    "Only hands or a partial body (never a face) may appear; no recognisable people, and do NOT copy "
+    "any person who appears in the reference image. The product is clearly visible and large in the "
+    "frame. No added text, logos, watermarks or readable signage other than what is printed on the "
+    "product itself. If any small printed text on the product is unclear in the reference, leave it "
+    "plain rather than inventing text."
+)
+
+# 구도. 이 순서대로 count 만큼 쓴다 — 앞 3장이 '대표·구성·사용' 기본 세트다.
+# kind: detail(스튜디오 상세컷) | use(사용 장면). use 컷 캡션에는 'AI 생성'을 밝힌다(실제 사용 사진이 아니므로).
 SHOTS: list[dict] = [
     {
         "key": "hero",
+        "kind": "detail",
         "label": "정면 3/4 각도",
         "prompt": "Product detail photograph of {name} shown from a low three-quarter angle "
                   "so its form and thickness read clearly.",
     },
     {
         "key": "open",
+        "kind": "detail",
         "label": "열린 상태 · 구성",
         "prompt": "Product detail photograph of {name} shown opened or with its contents "
                   "visible, so a buyer can see what is inside and how much is included.",
     },
     {
+        "key": "use_scene",
+        "kind": "use",
+        "label": "사용 장면 예시 (AI 생성 이미지)",
+        "prompt": "Lifestyle photograph of {name} being used the way it is normally used, in its "
+                  "typical everyday setting (for baby or child products, a parent's hands use it). "
+                  "If the product is too large to hold, show it in place in a realistic home or "
+                  "outdoor setting with at most a hand or lower body visible.",
+    },
+    {
         "key": "macro",
+        "kind": "detail",
         "label": "재질 매크로",
         "prompt": "Extreme macro detail photograph of {name}, filling the frame with its "
                   "surface, texture and finish. Very shallow depth of field. No packaging "
                   "text in frame.",
     },
     {
+        "key": "use_hands",
+        "kind": "use",
+        "label": "사용 클로즈업 (AI 생성 이미지)",
+        "prompt": "Close-up lifestyle photograph of hands operating {name} — pressing, opening, "
+                  "pouring, holding or wearing it, whichever fits the product — with the key "
+                  "feature of the product clearly in view.",
+    },
+    {
         "key": "scale",
+        "kind": "detail",
         "label": "디테일 클로즈업",
         "prompt": "Close-up detail photograph of the most distinctive part of {name}, "
                   "showing build quality and finish at close range.",
@@ -82,25 +122,50 @@ class ShotError(RuntimeError):
     pass
 
 
+def _codex_on() -> bool:
+    """Codex(ChatGPT 구독) 경로 사용 가능 여부 — IMAGE_BACKEND=codex 이고 로그인돼 있을 때."""
+    if config.IMAGE_BACKEND != "codex":
+        return False
+    from modules import codex_image
+    return codex_image.available()
+
+
 def enabled() -> bool:
-    return bool(config.GEMINI_API_KEY)
+    return _codex_on() or bool(config.GEMINI_API_KEY)
 
 
-def build_prompts(product_name: str, count: int = 3, extra: str = "") -> list[dict]:
-    """구도 count 개를 상품명에 맞춰 채운다."""
+def build_prompts(product_name: str, count: int = 3, extra: str = "", include_use: bool = False) -> list[dict]:
+    """구도 count 개를 상품명에 맞춰 채운다. include_use=False 면 스튜디오 상세컷만(직접 찍은
+    사진이 있는 글 — AI 사용 장면이 섞이면 안 된다), True 면 사용 장면 컷을 순서대로 끼운다."""
     name = (product_name or "the product").strip()
+    pool = SHOTS if include_use else [x for x in SHOTS if x.get("kind") != "use"]
     out = []
-    for shot in SHOTS[: max(1, min(count, len(SHOTS)))]:
-        text = shot["prompt"].format(name=name) + " " + _COMMON
+    for shot in pool[: max(1, min(count, len(pool)))]:
+        common = _COMMON_USE if shot.get("kind") == "use" else _COMMON
+        text = shot["prompt"].format(name=name) + " " + common
         if extra.strip():
             text += " " + extra.strip()
         out.append({"key": shot["key"], "label": shot["label"], "prompt": text})
     return out
 
 
+def _generate(reference: bytes, prompt: str) -> bytes:
+    """레퍼런스 + 프롬프트 → 이미지. Codex(구독)가 기본이고, 실패해도 Gemini(과금)로는
+    ALLOW_GEMINI_SHOT_FALLBACK=1 일 때만 넘어간다(조용한 과금 방지)."""
+    if _codex_on():
+        from modules import codex_image
+        try:
+            return codex_image.generate(prompt, reference=reference)
+        except codex_image.CodexImageError as e:
+            if not (config.ALLOW_GEMINI_SHOT_FALLBACK and config.GEMINI_API_KEY):
+                raise ShotError(f"Codex 이미지 생성 실패: {str(e)[:160]}") from e
+            print(f"  (Codex 실패 → Gemini 로 대체: {str(e)[:80]})")
+    return _call([_image_part(reference), {"text": prompt}])
+
+
 def _call(parts: list[dict]) -> bytes:
     """Gemini 이미지 모델 호출 → 첫 이미지 바이트."""
-    if not enabled():
+    if not config.GEMINI_API_KEY:
         raise ShotError("GEMINI_API_KEY 가 없습니다(.env 확인).")
     url = _ENDPOINT.format(model=config.GEMINI_IMAGE_MODEL, key=config.GEMINI_API_KEY)
     req = urllib.request.Request(
@@ -125,17 +190,27 @@ def _image_part(data: bytes, mime: str = "image/jpeg") -> dict:
     return {"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode()}}
 
 
-def make(reference: bytes, product_name: str, count: int = 3, extra: str = "") -> list[Shot]:
-    """레퍼런스 사진으로 상세컷 count 장. 개별 실패는 건너뛰고 나머지를 돌려준다."""
-    shots: list[Shot] = []
-    for spec in build_prompts(product_name, count, extra):
+def make(reference: bytes, product_name: str, count: int = 3, extra: str = "",
+         include_use: bool = False) -> list[Shot]:
+    """레퍼런스 사진으로 컷 count 장. 개별 실패는 건너뛰고 나머지를 돌려준다.
+
+    Codex 는 장당 45~80초라 순차면 5장에 5분 넘게 걸린다 — 동시 실행 수는 codex_image 의
+    세마포어(CODEX_IMAGE_WORKERS, 기본 2)가 제한하므로 스레드만 열고 순서는 그대로 지킨다."""
+    from concurrent.futures import ThreadPoolExecutor
+    specs = build_prompts(product_name, count, extra, include_use)
+    errors: list[str] = []
+
+    def _one(spec: dict):
         try:
-            data = _call([_image_part(reference), {"text": spec["prompt"]}])
-        except ShotError:
-            continue
-        shots.append(Shot(spec["key"], spec["label"], spec["prompt"], data))
+            return Shot(spec["key"], spec["label"], spec["prompt"], _generate(reference, spec["prompt"]))
+        except ShotError as e:
+            errors.append(str(e))
+            return None
+
+    with ThreadPoolExecutor(max_workers=max(1, min(len(specs), 4))) as ex:
+        shots = [s for s in ex.map(_one, specs) if s is not None]
     if not shots:
-        raise ShotError("상세컷을 한 장도 만들지 못했습니다.")
+        raise ShotError("상세컷을 한 장도 만들지 못했습니다." + (f" ({errors[0][:140]})" if errors else ""))
     return shots
 
 
@@ -151,4 +226,4 @@ def revise(reference: bytes, base_prompt: str, feedback: str) -> bytes:
     text = base_prompt
     if feedback.strip():
         text += f"\n\nAdditional art direction from the photographer: {feedback.strip()}"
-    return _call([_image_part(reference), {"text": text}])
+    return _generate(reference, text)

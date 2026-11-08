@@ -34,6 +34,9 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
   const [guidelineFiles, setGuidelineFiles] = useState<
     { name: string; url: string; ok: boolean }[] | null
   >(null); // 첨부한 협찬 가이드 파일이 실제로 스토리지에 있는지 확인용
+  const [reGuideFiles, setReGuideFiles] = useState<File[]>([]); // 가이드 재첨부 선택 파일
+  const [reGuideText, setReGuideText] = useState(""); // 가이드 재첨부 붙여넣기 텍스트
+  const [reGuideMsg, setReGuideMsg] = useState("");
   const [revisionReq, setRevisionReq] = useState(""); // 초안 확인 후 수정 요청
   const [regenMemo, setRegenMemo] = useState(""); // 처음부터 다시쓰기용 메모
   const editedRef = useRef(false); // 사용자가 편집을 시작하면 폴링이 덮어쓰지 않게
@@ -153,6 +156,100 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
       editedRef.current = false;
       load(); // status 가 generating 으로 바뀌면 폴링 useEffect 가 다시 돌아 완성본을 보여줌
     }
+  }
+
+  // 이미지 확정 → 본문 맞추기: 카드·상품컷을 피드백으로 다듬은 뒤, 최종 이미지를 기준으로 맥이
+  // 본문을 다시 맞춘다(수정 재생성 경로 + data.sync_images). 이미지가 만들어지는 중엔 막는다.
+  async function confirmImages() {
+    setSaving(true);
+    const res = await fetch(`/api/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        body,
+        data: {
+          ...(draft?.data ?? {}),
+          sync_images: true,
+          revision_request: "확정한 이미지에 맞춰 본문 다듬기",
+        },
+        status: "generating",
+      }),
+    });
+    setSaving(false);
+    if (res.ok) {
+      editedRef.current = false;
+      load();
+    }
+  }
+
+  // 협찬 가이드 재첨부 — 첨부가 안 됐거나(❌) 빠졌을 때 이 글에 가이드를 다시 올린다.
+  // 새 경로로 올린 뒤 request.guideline_* 에 덧붙이고(rewrite=true 면 그 가이드로 처음부터 다시 쓴다).
+  async function reattachGuideline(rewrite: boolean) {
+    if (reGuideFiles.length === 0 && !reGuideText.trim()) {
+      setReGuideMsg("파일을 고르거나 가이드 내용을 붙여넣어 주세요.");
+      return;
+    }
+    setSaving(true);
+    setReGuideMsg("");
+    try {
+      const prevData = (draft?.data ?? {}) as Record<string, unknown>;
+      const prevReq = (prevData.request ?? {}) as Record<string, unknown>;
+      // 업로드가 깨진 예전 항목(❌)은 빼고, 정상 파일은 유지한다.
+      const oldPaths = Array.isArray(prevReq.guideline_paths) ? (prevReq.guideline_paths as string[]) : [];
+      const oldNames = Array.isArray(prevReq.guideline_names) ? (prevReq.guideline_names as string[]) : [];
+      const keepIdx = oldPaths.map((_, i) => i).filter((i) => guidelineFiles?.[i]?.ok !== false);
+      let paths = keepIdx.map((i) => oldPaths[i]);
+      let names = keepIdx.map((i) => oldNames[i] ?? oldPaths[i].split("/").pop() ?? "");
+      if (reGuideFiles.length > 0) {
+        const r = await fetch(`/api/drafts/${id}/guideline`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ names: reGuideFiles.map((f) => f.name) }),
+        });
+        if (!r.ok) throw new Error("업로드 주소를 받지 못했어요.");
+        const { uploads } = (await r.json()) as { uploads: { name: string; path: string; url: string }[] };
+        for (let i = 0; i < uploads.length; i++) {
+          const f = reGuideFiles[i];
+          const put = await fetch(uploads[i].url, {
+            method: "PUT",
+            headers: { "content-type": f.type || "application/octet-stream" },
+            body: f,
+          });
+          if (!put.ok) throw new Error(`'${f.name}' 업로드 실패 (${put.status})`);
+          paths = [...paths, uploads[i].path];
+          names = [...names, uploads[i].name];
+        }
+      }
+      const text = [String(prevReq.guideline_text ?? "").trim(), reGuideText.trim()].filter(Boolean).join("\n\n");
+      const nextData: Record<string, unknown> = {
+        ...prevData,
+        request: {
+          ...prevReq,
+          guideline_paths: paths,
+          guideline_names: names,
+          guideline_path: paths[0] ?? "",
+          guideline_name: names[0] ?? "",
+          guideline_text: text,
+        },
+      };
+      delete nextData._guideline_cache; // 구성이 바뀌었으니 파싱 캐시 폐기
+      if (rewrite) delete nextData.revision_request;
+      const res = await fetch(`/api/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: nextData, ...(rewrite ? { status: "generating" } : {}) }),
+      });
+      if (!res.ok) throw new Error("저장하지 못했어요.");
+      setReGuideFiles([]);
+      setReGuideText("");
+      setReGuideMsg(rewrite ? "가이드를 올렸어요. 이 가이드로 다시 쓰는 중…" : "가이드를 다시 첨부했어요.");
+      editedRef.current = false;
+      load();
+    } catch (e) {
+      setReGuideMsg(e instanceof Error ? e.message : String(e));
+    }
+    setSaving(false);
   }
 
   // 처음부터 다시쓰기 — 지금 제목·본문은 버리고, 메모를 기준으로 리서치·벤치마킹부터
@@ -292,7 +389,7 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
               ? "🖼 상품 사진도 준비됐어요 — 글이 완성되면 같이 보여드려요."
               : d.image_job.status === "error"
                 ? `🖼 상품 사진 생성 실패: ${String(d.image_job.error ?? "").slice(0, 60)}`
-                : "🖼 상품 상세컷 3장도 같이 만들고 있어요…"}
+                : `🖼 상품 상세컷${(d.image_job as { include_use?: boolean }).include_use ? "·사용 장면" : ""} ${Number((d.image_job as { count?: number }).count) || 3}장도 같이 만들고 있어요…`}
           </p>
         )}
         <Link href="/list" className="text-sm text-blue-600">
@@ -467,6 +564,69 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
           </ul>
         </div>
       )}
+      <details
+        className="mb-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs"
+        open={!guidelineFiles || guidelineFiles.length === 0 || guidelineFiles.some((f) => !f.ok)}
+      >
+        <summary className="cursor-pointer font-medium text-emerald-700">
+          📎 협찬 가이드 다시 첨부
+          {(!guidelineFiles || guidelineFiles.length === 0) && !guidelineName ? " (지금 첨부된 가이드 없음)" : ""}
+        </summary>
+        <div className="mt-2 flex flex-col gap-2">
+          <input
+            type="file"
+            multiple
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []); // FileList 는 value 를 비우면 같이 비워지므로 먼저 복사
+              e.currentTarget.value = "";
+              if (picked.length) setReGuideFiles((prev) => [...prev, ...picked]);
+            }}
+            className="text-xs"
+          />
+          {reGuideFiles.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {reGuideFiles.map((f, i) => (
+                <li key={i} className="flex items-center justify-between rounded border border-neutral-200 px-2 py-1">
+                  <span className="truncate">📋 {f.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setReGuideFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="ml-2 text-neutral-400"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <textarea
+            value={reGuideText}
+            onChange={(e) => setReGuideText(e.target.value)}
+            rows={3}
+            placeholder="또는 가이드 내용을 여기에 붙여넣기"
+            className="rounded border border-neutral-300 p-2 text-xs"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => reattachGuideline(true)}
+              disabled={saving}
+              className="flex-1 rounded-lg bg-emerald-600 py-2 text-white disabled:opacity-50"
+            >
+              첨부하고 이 가이드로 다시 쓰기
+            </button>
+            <button
+              type="button"
+              onClick={() => reattachGuideline(false)}
+              disabled={saving}
+              className="rounded-lg border border-emerald-600 px-3 py-2 text-emerald-700 disabled:opacity-50"
+            >
+              첨부만
+            </button>
+          </div>
+          {reGuideMsg && <p className="text-emerald-700">{reGuideMsg}</p>}
+        </div>
+      </details>
       {!guidelineFiles && guidelineName && (
         <p className="mb-2 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700">
           📋 협찬 가이드 반영됨: {guidelineName}
@@ -594,6 +754,25 @@ export default function EditPage({ params }: { params: Promise<{ id: string }> }
         )}
         onSaveLink={saveProductLink}
       />
+
+      {(draft.images ?? []).length > 0 && (
+        <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <p className="mb-1 text-sm font-medium text-emerald-900">✅ 이미지 확정 → 글 맞추기</p>
+          <p className="mb-2 text-xs text-emerald-800">
+            위에서 이미지를 다 다듬었으면 눌러주세요. 맥이 <strong className="font-medium">최종 이미지를 다시 보고</strong>{" "}
+            이미지 내용·글자와 어긋난 문장만 고쳐요(나머지 글은 유지, 3~5분). AI로 만든 사용 장면은 직접 써본 것처럼
+            쓰지 않아요.
+          </p>
+          <button
+            onClick={confirmImages}
+            disabled={saving || (["requested", "running"].includes(String((d.card_job as { status?: string } | undefined)?.status ?? "")) ||
+            ["requested", "running"].includes(String((d.image_job as { status?: string } | undefined)?.status ?? "")))}
+            className="w-full rounded-lg bg-emerald-700 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? "요청 보내는 중…" : "이 이미지로 글 맞추기"}
+          </button>
+        </div>
+      )}
 
       <ClipBuilder id={id} />
 

@@ -34,6 +34,8 @@ IMAGE_BACKEND = os.getenv("IMAGE_BACKEND", "codex").strip().lower()
 LLM_BACKEND = os.getenv("LLM_BACKEND", "codex").strip().lower()
 ALLOW_LLM_API_FALLBACK = os.getenv("ALLOW_LLM_API_FALLBACK", "").strip().lower() in ("1", "true", "yes")
 ALLOW_OPENAI_IMAGE_FALLBACK = os.getenv("ALLOW_OPENAI_IMAGE_FALLBACK", "").strip().lower() in ("1", "true", "yes")
+# 상품 상세·사용컷은 Codex(구독)가 기본. 구독이 막혔을 때 Gemini API(건당 과금)로 넘어갈지 — 기본은 안 넘어간다.
+ALLOW_GEMINI_SHOT_FALLBACK = os.getenv("ALLOW_GEMINI_SHOT_FALLBACK", "").strip().lower() in ("1", "true", "yes")
 HF_API_KEY = os.getenv("HF_API_KEY", "").strip()   # 힉스필드(카드뉴스 배경 이미지 생성)
 HF_API_SECRET = os.getenv("HF_API_SECRET", "").strip()
 # 핸드폰/네트워크 접속 시 보호용 비밀번호(설정하면 잠금, 비우면 잠금 없음)

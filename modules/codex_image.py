@@ -39,6 +39,13 @@ _WRAPPER = (
     "Do not write any code, do not copy/move/rename files, and do not generate more than one image. "
     "When the image is generated, reply with just the word done.\n\nIMAGE PROMPT:\n{prompt}"
 )
+# 레퍼런스 사진(상품 원본)을 붙이는 경우 — 2026-11-04 실측: 라벨 글자·형태·그래픽이 원본과 일치하고
+# 장당 44~80초. 레퍼런스에 실제 사람(모델 얼굴)이 있어도 재현하지 않고 손만 그렸다.
+_WRAPPER_REF = (
+    "Use the built-in image generation tool to create exactly ONE image, using the attached reference image "
+    "as the product reference. Do not write any code, do not copy/move/rename files, and do not generate more "
+    "than one image. When the image is generated, reply with just the word done.\n\nIMAGE PROMPT:\n{prompt}"
+)
 
 
 def _binary() -> str | None:
@@ -71,18 +78,23 @@ def _thread_id(stdout: str) -> str | None:
     return None
 
 
-def _run_once(prompt: str, timeout: int) -> bytes:
+def _run_once(prompt: str, timeout: int, reference: bytes | None = None) -> bytes:
     bin_ = _binary()
     if not bin_:
         raise CodexImageError("Codex CLI 를 찾지 못했습니다(ChatGPT 앱 설치 또는 npm i -g @openai/codex).")
     work = tempfile.mkdtemp(prefix="codex_img_")
     tid = None
     try:
+        # 프롬프트(위치 인자)를 먼저 두고 -i 는 맨 뒤 — -i 가 뒤따르는 인자를 이미지로 삼킨다.
         cmd = [
-            bin_, "exec", "--skip-git-repo-check", "--json", "--color", "never",
+            bin_, "exec", (_WRAPPER_REF if reference else _WRAPPER).format(prompt=prompt),
+            "--skip-git-repo-check", "--json", "--color", "never",
             "-s", "read-only", "-C", work,
-            _WRAPPER.format(prompt=prompt),
         ]
+        if reference:
+            ref_path = Path(work) / "reference.jpg"
+            ref_path.write_bytes(reference)
+            cmd += ["-i", str(ref_path)]
         try:
             r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired as e:
@@ -108,13 +120,15 @@ def _run_once(prompt: str, timeout: int) -> bytes:
             shutil.rmtree(_GENERATED_DIR / tid, ignore_errors=True)
 
 
-def generate(prompt: str, *, timeout: int = 420, retries: int = 1) -> bytes:
-    """프롬프트 → PNG bytes. 실패하면 retries 만큼 다시 시도한 뒤 CodexImageError."""
+def generate(prompt: str, *, timeout: int = 420, retries: int = 1, reference: bytes | None = None) -> bytes:
+    """프롬프트 → PNG bytes. 실패하면 retries 만큼 다시 시도한 뒤 CodexImageError.
+
+    reference 를 주면 그 사진을 상품 레퍼런스로 붙여 만든다(상품 상세·사용컷)."""
     last: Exception | None = None
     with _SLOTS:
         for attempt in range(retries + 1):
             try:
-                return _run_once(prompt, timeout)
+                return _run_once(prompt, timeout, reference)
             except CodexImageError as e:
                 last = e
                 if "로그인이 만료" in str(e):

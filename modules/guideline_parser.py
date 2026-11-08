@@ -57,8 +57,15 @@ def _from_xlsx(data: bytes) -> str:
 def _from_pdf(data: bytes) -> str:
     from pypdf import PdfReader
 
+    import re
+
     reader = PdfReader(io.BytesIO(data))
-    return "\n".join((p.extract_text() or "") for p in reader.pages)
+    raw = "\n".join((p.extract_text() or "") for p in reader.pages)
+    # 슬라이드형 PDF 는 단어마다 줄바꿈·이중 공백이 들어가 글자 수만 먹는다(실측: 미소 가이드 7.9K자 중 상당수가 공백).
+    # 공백·줄바꿈을 한 칸으로 줄이고, 글머리 기호(● ■ ○ ※ ❌ ✅ ⭐)에서만 줄을 나눈다.
+    flat = re.sub(r"\s+", " ", raw)
+    flat = re.sub(r"\s*([●■○※❌✅⭐])", r"\n\1", flat)
+    return flat.strip()
 
 
 def _from_docx(data: bytes) -> str:
@@ -74,29 +81,34 @@ def _from_docx(data: bytes) -> str:
     return "\n".join(p for p in parts if p.strip())
 
 
+def is_failure(text: str) -> bool:
+    """extract_text 가 돌려준 안내 문자열(파싱 실패·미지원 형식)인지."""
+    t = (text or "").strip()
+    return t.startswith("(가이드 파일 파싱 실패") or t.startswith("(지원하지 않는 가이드 파일 형식")
+
+
+_IMG_SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+
+
 def _from_image(data: bytes) -> str:
-    """이미지 가이드는 Claude 비전으로 지시사항을 텍스트로 옮긴다.
+    """이미지 가이드를 비전으로 읽어 지시사항 텍스트로 옮긴다.
 
-    2026-09-26: 단순 전사(OCR) 작업인데 본문 작성용 Opus(WRITER_MODEL)를 쓰고 있던 걸
-    확인해 Sonnet(VISION_MODEL)으로 낮췄다 — 사진 분석 등 다른 비전 작업과 동급 작업이라
-    Opus까지 필요 없다."""
+    2026-11-08: 예전엔 Anthropic API(client.messages.create)를 직접 불러 키가 없으면 조용히 실패했다.
+    이제 llm.call_json 을 거쳐 LLM_BACKEND=codex 일 때 ChatGPT 구독(Codex CLI, 사진은 -i 첨부)으로 처리한다."""
     import config
-    from modules.llm import get_client, prepare_image_block
+    from modules.llm import call_json, prepare_image_block
 
-    client = get_client()
-    resp = client.messages.create(
+    out = call_json(
         model=config.VISION_MODEL,
-        max_tokens=2000,
         system=(
             "너는 협찬 가이드라인 이미지를 읽어 그 안의 모든 지시사항을 한국어로 빠짐없이 옮겨 적는다. "
             "요약하지 말고 필수 키워드·해시태그·제목/글자수 규정·금지사항·필수 사진/영상 요구를 그대로 나열하라."
         ),
-        messages=[{
-            "role": "user",
-            "content": [
-                prepare_image_block(data),
-                {"type": "text", "text": "이 가이드라인 이미지의 내용을 모두 텍스트로 옮겨줘."},
-            ],
-        }],
+        content=[
+            prepare_image_block(data),
+            {"type": "text", "text": "이 가이드라인 이미지의 내용을 모두 텍스트로 옮겨 text 에 담아줘."},
+        ],
+        schema=_IMG_SCHEMA,
+        max_tokens=4000,
     )
-    return next((b.text for b in resp.content if b.type == "text"), "")
+    return out.get("text", "")

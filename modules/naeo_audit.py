@@ -75,6 +75,7 @@ def repetition_problems(body: str) -> list[str]:
     return problems
 
 
+_TITLE_AI_TELLS = ("솔직 후기", "솔직한", "이야기", "담았어요", "정리해봤", "알아봤", "찾아본", "살펴본", "완벽 정리", "한눈에", "에 대한")
 _TITLE_HYPE = ("필수템", "인생템", "국민템", "무조건", "충격", "비밀", "정체", "대방출", "역대급", "기적")
 _EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]")
 
@@ -113,6 +114,9 @@ def title_problems(titles: list[str]) -> list[str]:
             problems.append(f"제목에 가격 금지('{t[:18]}…')")
         if _EMOJI_RE.search(t):
             problems.append(f"제목에 이모지·장식 기호 금지('{t[:18]}…')")
+        ai = [w for w in _TITLE_AI_TELLS if w in t]
+        if ai:
+            problems.append(f"제목 AI 상투어 {ai}('{t[:18]}…') — 검색어+구체 사실로(T7)")
         hype = [w for w in _TITLE_HYPE if w in t]
         if hype:
             problems.append(f"제목 낚시·과장어 {hype}('{t[:18]}…')")
@@ -122,6 +126,29 @@ def title_problems(titles: list[str]) -> list[str]:
     elif len(ts) >= 3 and shapes.count("쉼표") >= 3:
         problems.append("제목 후보가 쉼표형 일색 — 다른 구조를 섞어라(T5)")
     return problems
+
+
+_DISCLAIMER_RE = re.compile(
+    r"(뜻(으로|이|은)\s*(쓰는|적은|쓴|아니)|뜻은\s*아니|명칭으로\s*(적|쓴)|구분해서\s*(적|쓰)|나누어\s*적|"
+    r"이야기할\s*수는\s*없|알\s*수는\s*없|정확히\s*알\s*수\s*없|단정(할|하지|은)|"
+    r"받아들이지는\s*(않|말)|오해하지\s*(않|말)|으로\s*생각하지는\s*(않|말)|"
+    r"(건|게|것은|것이|말은|려는\s*건|한\s*건)\s*아니(에요|예요|고요|라|지만)|않으셨으면|적지\s*않았|이번\s*(글|사용기)에|경험한\s*쪽만|"
+    r"중심이에요|범위는|견주기는\s*어려|확정하기\s*어려|판단한\s*건|필요한\s*내용이에요|"
+    r"별개예요|별개로\s*(적|봐)|확인한\s*(경험|적)은\s*없|경험은\s*없어요|적으려고\s*해요|적고\s*싶어요|"
+    r"~?라는\s*(말|이야기)는\s*아니|다르니까요)"
+)
+# 실제 안전 안내(허용): 같은 문장에 아래가 있으면 면책으로 세지 않는다.
+_SAFETY_OK_RE = re.compile(r"(상처|약이|의약|치료|전문의|병원|알레르기|사용을\s*(멈|중단|자제)|붉은|가려|눈에\s*들어)")
+
+
+def disclaimer_problems(body: str) -> list[str]:
+    """쓸데없는 해명·면책·자기설명 문장(AI 티 1순위)을 센다. 안전 안내는 제외."""
+    out: list[str] = []
+    for ln in re.split(r"(?<=[.!?요다죠])\s+|\n+", _strip_markers(body or "")):
+        t = ln.strip()
+        if t and _DISCLAIMER_RE.search(t) and not _SAFETY_OK_RE.search(t):
+            out.append(t[:40])
+    return out
 
 
 def table_problems(body: str) -> list[str]:
@@ -253,6 +280,9 @@ def audit(post: dict, *, length: int = 0) -> dict:
         issues.append(
             f"인용구 {quote_count}개(목표 {_QUOTE_MIN}개 이상) — 본문 섹션마다 핵심 한 문장씩 흩어 넣어야 한다"
         )
+    disclaimers = disclaimer_problems(body)
+    if disclaimers:
+        issues.append(f"불필요한 해명·면책 {len(disclaimers)}문장(AI 티) — 삭제: " + " / ".join(disclaimers[:6]))
     repeats = repetition_problems(body)
     for prob in repeats:
         issues.append(f"중언부언: {prob}")
@@ -296,6 +326,7 @@ def audit(post: dict, *, length: int = 0) -> dict:
         "has_table": has_table,
         "bad_tables": bad_tables,
         "repetition": repeats,
+        "disclaimers": disclaimers,
         "has_quote": has_quote,
         "quote_count": quote_count,
         "subheading_count": len(subs),
@@ -322,6 +353,7 @@ def densify(
     need_numbers: bool,
     need_quote: bool = False,
     need_dedupe: bool = False,
+    need_disclaimer: bool = False,
 ) -> str:
     """NAEO 조건 미달 본문을 한 번 보정한다. 실패하면 원문을 그대로 돌려준다."""
     if not issues:
@@ -355,6 +387,14 @@ def densify(
             "가장 구체적인 한 곳만 남기고 나머지는 통째로 삭제하라. 삭제로 분량이 줄어도 된다(메우지 마라). "
             "남기는 문장은 바꾸지 않는다. 예고·메타 문장('결론부터 말하면', '적어볼게요')은 서두 1회만 남기고 지운다. "
             "지적된 어미·추임새는 다른 종결로 바꾸거나 지운다."
+        )
+
+    if need_disclaimer:
+        asks.append(
+            "[불필요한 해명·면책 삭제] 독자가 하지도 않은 오해를 먼저 막는 문장('~라는 뜻은 아니에요', '구분해서 적었어요', "
+            "'단정할 수는 없어요', '~했다고 받아들이지는 않았으면 해요')을 지적 목록대로 통째로 삭제하라. "
+            "대체 문장을 쓰지 말고, 지우면 앞뒤가 어색할 때만 연결을 한 줄로 매끄럽게 하라. 분량이 줄어도 된다. "
+            "실제 안전 안내(상처·알레르기·사용 중단·전문의 상담)는 지우지 마라."
         )
 
     instruction = (

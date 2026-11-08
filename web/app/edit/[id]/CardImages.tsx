@@ -143,16 +143,26 @@ export default function CardImages({ id }: Props) {
                     rows={2}
                     className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
                   />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      regenerate(c.photo_number, (notes[c.photo_number] ?? "").trim())
-                    }
-                    disabled={busy || !(notes[c.photo_number] ?? "").trim()}
-                    className="self-start rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-                  >
-                    이 피드백으로 다시 만들기
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        regenerate(c.photo_number, (notes[c.photo_number] ?? "").trim())
+                      }
+                      disabled={busy || !(notes[c.photo_number] ?? "").trim()}
+                      className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                    >
+                      이 피드백으로 다시 만들기
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => regenerate(c.photo_number, "")}
+                      disabled={busy}
+                      className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 disabled:opacity-40"
+                    >
+                      그대로 한 번 더 뽑기
+                    </button>
+                  </div>
                 </li>
               );
             })}

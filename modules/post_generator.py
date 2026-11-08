@@ -276,6 +276,14 @@ def generate_post(
     else:
         guideline_rule = ""
 
+    # 가이드를 하드 제약 체크리스트로 뽑아 시스템·사용자 프롬프트에 재주입하고 작성 뒤 검수한다.
+    from modules import guideline_checklist
+    checklist = guideline_checklist.extract(guideline) if guideline else {}
+    checklist_rule = guideline_checklist.to_prompt(checklist)
+    if checklist_rule:
+        print(f"  📋 가이드 체크리스트 {checklist_rule.count(chr(10))}항목 추출")
+        guideline_rule += "\n\n" + checklist_rule
+
     # 협찬/제공 여부(폰 입력화면 체크박스) — 가이드라인 텍스트 첨부 여부와 무관하게 독립적으로
     # 받는다. 2026-09-25: 처음엔 guideline 유무로 협찬을 판단했는데, 실제로는 memo만 넣고
     # 가이드라인 없이 쓰는 협찬글이 많아(예: 베르블랑 아기세제) 그 신호가 안 맞았다 — 그래서
@@ -419,7 +427,8 @@ def generate_post(
         "- suggested_keywords: 이 글의 추천 핵심 키워드 3~5개. 단일 대형 키워드보다 "
         "'세부 수식어 + 핵심어' 롱테일 조합을 우선 제안하라(브랜드·모델명, 용량/형태, 개월수, 연도, "
         "'후기·비교·총정리' 같은 정보형 어미). 경쟁 낮고 검색의도 뚜렷한 조합이 상위노출에 유리하다.\n"
-        "- title_candidates: [제목 규칙] T5의 서로 다른 구조(쉼표·파이프·괄호·질문·평문·말머리 중 3종)로 제목 3개. "
+        "- title_candidates: **[제목 규칙] T7(AI 티 빼기)이 최우선** — 독자가 검색창에 칠 말 + 본문에 실제로 있는 구체 사실 하나, "
+        "'솔직 후기·이야기·담았어요·찾아본' 같은 상투어와 소유격 연쇄 금지. 그 위에서 T5의 서로 다른 구조(쉼표·파이프·괄호·질문·평문·말머리 중 3종)로 제목 3개. "
         "핵심 검색어는 앞 15자 안, 공백 제외 26~36자(롱테일 나열형만 45자까지). 숫자는 본문에 실제로 있는 월령·개수·규격일 때만 "
         "후보 0~2개에 넣고, 가격·금액은 제목에 쓰지 마라. 3개 모두 쉼표형이면 실패. 낚시성·과장 금지.\n"
         "- hashtags: 글 주제와 관련되고 네이버 SEO 를 고려한 해시태그. 기호(#) 없이 단어만, 핵심 키워드 "
@@ -485,7 +494,7 @@ def generate_post(
 
 위 정보를 바탕으로, 비비가 직접 쓴 것 같은 네이버 블로그 초안을 작성하라.
 사진/영상은 본문 흐름에 맞게 [사진N]/[영상N]으로 배치하라.
-확인되지 않은 정보는 지어내지 말고 confirm_needed 로 빼라."""
+확인되지 않은 정보는 지어내지 말고 confirm_needed 로 빼라.""" + ("\n\n" + checklist_rule if checklist_rule else "")
 
     post = call_json(
         model=config.WRITER_MODEL,
@@ -547,15 +556,35 @@ def generate_post(
                 need_numbers=result["numeric_ratio"] < result["numeric_target"],
                 need_quote=not result["has_quote"],
                 need_dedupe=bool(result.get("repetition")),
+                need_disclaimer=bool(result.get("disclaimers")),
             )
             # 보정본이 분량을 깎아먹었으면(요약해버린 경우) 원문을 지킨다.
             # 중언부언 삭제는 분량을 깎는 게 목적이므로 하한을 75%로 낮춘다(요약해버리는 것만 막는다).
-            _keep = 0.75 if result.get("repetition") else 0.9
+            _keep = 0.75 if (result.get("repetition") or result.get("disclaimers")) else 0.9
             if fixed != post.get("body", "") and _content_len(fixed) >= result["content_len"] * _keep:
                 post["body"] = fixed
             result = naeo_audit.audit(post, length=length)
         print(f"  {naeo_audit.format_issues(result)}")
         post["naeo_audit"] = result
+
+    # 협찬 가이드 준수 검수 — 코드로 세어 어기면 1회 고치고, 그래도 남으면 사용자에게 올린다.
+    if checklist:
+        viol = guideline_checklist.verify(post, checklist)
+        if viol:
+            print("  ⚠️ 가이드 위반 " + str(len(viol)) + "건 → 수정: " + " / ".join(viol)[:300])
+            post = guideline_checklist.repair(post, checklist, viol, edit_system)
+            viol = guideline_checklist.verify(post, checklist)
+        if viol:
+            post["confirm_needed"] = list(post.get("confirm_needed") or []) + [
+                {"item": "⚠️ 협찬 가이드 미충족", "note": x} for x in viol]
+            print("  ⚠️ 가이드 미충족 남음: " + " / ".join(viol)[:300])
+        else:
+            print("  ✅ 가이드 체크리스트 통과")
+
+    # 메모는 가이드를 보라고 하는데 실제 첨부·입력이 없으면 조용히 넘기지 않고 알린다.
+    if not guideline and re.search(r"가이드|체험단\s*(안내|요청)|첨부", memo or ""):
+        post["confirm_needed"] = list(post.get("confirm_needed") or []) + [
+            {"item": "⚠️ 가이드 없음", "note": "메모에 가이드를 언급했는데 첨부·입력된 가이드가 없어요 — 가이드를 올려 다시 생성하세요."}]
 
     # 안전망: 본문에 실제로 없는 소제목은 메타에서 뺀다. 남겨두면 워커가 없는 문단을
     # 찾아다니다 '일부 미적용'으로 끝난다(스타일이 안 입은 소제목이 본문 글씨로 남는다).

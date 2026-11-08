@@ -24,6 +24,17 @@ from modules.llm import _RETRYABLE, call_json
 # 정보성/화제성 글(직접 경험 사진이 없는 글 유형)에 자동으로 카드뉴스 10장을 채운다.
 _AUTO_ILLUSTRATE_TYPES = ("info", "hompiid")
 
+# '이미지 확정 → 본문 맞추기'에서 post_generator 의 수정 요청 자리에 들어가는 지시문.
+_SYNC_IMAGES_REQUEST = (
+    "사용자가 이 글에 들어갈 이미지를 피드백으로 다듬어 최종 확정했다. 첨부 사진 분석은 '확정된 최종 이미지' 기준이다. "
+    "(1) 각 [사진N] 앞뒤 문장이 그 이미지가 실제로 보여주는 내용과 어긋나면 이미지에 맞게 고쳐라. "
+    "(2) 이미지에 적힌 글자·숫자·표 내용과 본문 수치가 다르면 본문을 이미지(와 기존 확인된 사실)에 맞춰라. "
+    "이미지에 없는 내용을 새로 지어내지 마라. (3) 이미지 설명 문장이 [사진N] 바로 앞뒤에 자연스럽게 놓이게 하고, "
+    "이미 맞는 문단·구조·정보·분량은 그대로 둬라. (4) [사진N] 마커의 개수와 번호는 바꾸지 마라. "
+    "(5) 캡션에 'AI 생성'이라 적힌 사용 장면·상세컷은 실제로 써본 사진이 아니다 — 직접 써본 것처럼 쓰지 말고, "
+    "미사용 제품이면 소개형 톤('~라고 해요', '~로 보여요')을 유지하라."
+)
+
 POLL_SECONDS = 15
 GEN_ATTEMPTS = 2  # 간헐 네트워크 끊김 대비, 생성 전체 재시도 횟수
 
@@ -354,7 +365,7 @@ def _auto_illustrate(row: dict, post: dict, structure_key: str, title: str) -> l
     return uploaded_paths
 
 
-def _collect_guideline(req: dict) -> str:
+def _collect_guideline(req: dict, failures=None) -> str:
     """협찬 가이드/제품 설명서를 하나의 텍스트로 합친다.
 
     (1) 업로드된 파일들(guideline_paths, 구버전은 단일 guideline_path)을 각각 내려받아
@@ -374,10 +385,15 @@ def _collect_guideline(req: dict) -> str:
         try:
             gbytes = store.download(p)
             text = guideline_parser.extract_text(gbytes, name)
+            if guideline_parser.is_failure(text):
+                raise RuntimeError(text.strip("() ")[:120])
             if text.strip():
                 parts.append(f"[첨부 {i + 1}: {name}]\n{text.strip()}")
         except Exception as e:
             print(f"  (가이드/설명서 '{name}' 파싱 실패, 무시하고 진행: {str(e)[:60]})")
+            if failures is not None:
+                failures.append({"item": "⚠️ 가이드 파일을 읽지 못했어요",
+                                 "note": f"'{name}' — {str(e)[:100]}. 글에 이 가이드가 반영되지 않았어요. 화면의 '가이드 다시 첨부'로 다시 올리거나 내용을 붙여넣어 주세요."})
 
     pasted = (req.get("guideline_text") or "").strip()
     if pasted:
@@ -396,6 +412,13 @@ def generate(row: dict) -> None:
     # 이 경우 기존 초안(body)을 토대로 요청만 반영해 다시 쓴다(리서치·벤치마킹은 이미
     # 반영돼 있으므로 건너뛰어 빠르게). 처리 후 새 data 에는 안 담겨 자동으로 비워진다.
     revision_request = (data0.get("revision_request") or "").strip()
+    # 이미지 확정 → 본문 맞추기: 폰에서 카드·상품컷을 피드백으로 다듬고 '확정'을 누르면
+    # data.sync_images 가 켜져 온다. 최종 이미지를 새로 분석해(캐시 무시) 그 내용·글자에
+    # 맞게 본문을 고친다. 수정 재생성 경로를 그대로 쓰므로 리서치·벤치마킹은 건너뛴다.
+    sync_images = bool(data0.get("sync_images"))
+    if sync_images:
+        revision_request = _SYNC_IMAGES_REQUEST + (
+            f"\n[추가 요청] {revision_request}" if revision_request else "")
     previous_body = row.get("body", "") if revision_request else ""
     if revision_request:
         print(f"  ✏️ 수정 요청 반영 재생성: {revision_request[:60]}")
@@ -418,6 +441,7 @@ def generate(row: dict) -> None:
     # 캐시(2026-09-26): 이미지 가이드 파일은 Claude 비전으로 파싱하는데(guideline_parser),
     # 수정 요청/처음부터 다시쓰기로 재생성할 때마다 같은 파일을 매번 다시 파싱하고 있었다
     # (사진 분석과 같은 낭비). 첨부 파일·텍스트 구성이 그대로면 캐시를 재사용한다.
+    guideline_failures: list = []
     guideline_cache = data0.get("_guideline_cache") or {}
     guideline_cache_key = {
         "paths": req.get("guideline_paths") or ([req["guideline_path"]] if req.get("guideline_path") else []),
@@ -429,7 +453,7 @@ def generate(row: dict) -> None:
         if guideline_text:
             print(f"  📋 가이드/설명서 반영(캐시): {len(guideline_text)}자 — 파싱 재사용")
     else:
-        guideline_text = _collect_guideline(req)
+        guideline_text = _collect_guideline(req, guideline_failures)
         if guideline_text:
             print(f"  📋 가이드/설명서 반영: {len(guideline_text)}자")
 
@@ -462,7 +486,7 @@ def generate(row: dict) -> None:
     # 건너뛰어지지 않고 매번 새로 비전 API를 태워 비용 낭비였던 걸 확인). 사진 목록이나
     # 글 유형/사진 노출 방식이 바뀌면(=분석 결과가 달라질 수 있으면) 캐시를 버리고 다시 돈다.
     image_paths = row.get("images") or []
-    cache = data0.get("_image_analysis_cache") or {}
+    cache = {} if sync_images else (data0.get("_image_analysis_cache") or {})
     cache_key = {"images": image_paths, "structure_key": structure_key, "photo_style": photo_style}
     if cache.get("key") == cache_key and cache.get("analysis") is not None:
         analysis = cache["analysis"]
@@ -513,16 +537,18 @@ def generate(row: dict) -> None:
         "meta_description": post.get("meta_description", ""),
         "hashtags": post.get("hashtags", []),
         "photo_placement": post.get("photo_placement", []),
-        "card_specs": post.get("card_specs", []),
+        # 수정·확정 재생성 때는 _auto_illustrate 가 안 돌아 post 에 card_specs 가 없다 —
+        # 이어받지 않으면 폰의 '이 카드 다시 만들기'가 사라진다.
+        "card_specs": post.get("card_specs") or data0.get("card_specs", []),
         "video_placement": post.get("video_placement", []),
-        "confirm_needed": post.get("confirm_needed", []),
+        "confirm_needed": list(post.get("confirm_needed", [])) + guideline_failures,
         # 아래는 mac_worker._build_job_dir 가 쓰는 값
         "blog_id": req.get("blog_id", "bbnation"),
         "captions": _captions_from_placement(post.get("photo_placement", [])),
         "font": DEFAULT_FONT,
         "size": DEFAULT_SIZE,
         "_image_analysis_cache": {"key": cache_key, "analysis": analysis},
-        "_guideline_cache": {"key": guideline_cache_key, "result": guideline_text},
+        "_guideline_cache": ({"key": guideline_cache_key, "result": guideline_text} if not guideline_failures else {}),
     }
     # 상품 사진 관련 필드는 재생성 때 새 data 에 안 담겨 사라지면 안 되므로 이어받는다
     # (handle_shot_requests 가 같은 폴링 루프에서 방금 채웠을 수도, 예전부터 있을 수도 있다).
@@ -629,7 +655,7 @@ def handle_shot_requests() -> None:
         _finish_shot_job(row, {"image_job": job})
         try:
             if not product_shots.enabled():
-                raise RuntimeError("GEMINI_API_KEY 가 없습니다(.env 확인).")
+                raise RuntimeError("이미지 생성 수단이 없습니다 — Codex(ChatGPT) 로그인 또는 GEMINI_API_KEY 를 확인하세요.")
             if not link:
                 raise RuntimeError("상품 링크가 없습니다. 글감에 링크를 넣어주세요.")
 
@@ -659,8 +685,8 @@ def handle_shot_requests() -> None:
                 shots[target] = {**old, "path": path, "feedback": feedback, "rev": rev}
                 print(f"  ✅ #{target + 1} 재생성 완료: {feedback[:40]}")
             else:
-                count = int(job.get("count") or 3)
-                made = product_shots.make(ref, name, count)
+                count = max(1, min(6, int(job.get("count") or 3)))
+                made = product_shots.make(ref, name, count, include_use=bool(job.get("include_use")))
                 shots = []
                 for i, shot in enumerate(made, start=1):
                     path = store.upload_bytes(f"{row['id']}/shot_{i}.png", shot.data, "image/png")
