@@ -75,6 +75,44 @@ def repetition_problems(body: str) -> list[str]:
     return problems
 
 
+_FILLER_RE = re.compile(
+    r"(잖아요|과정(이|도|은|을|까지)|기준(이에요|이었|중\s*하나|을\s*잡)|부분이기도|이기도\s*해요|살피(는|며|면|어|곤)|살펴(보|요|야)|"
+    r"중요(했|해요)|어떻게\s*보이|눈에\s*들어|궁금(하실|했)|자연스럽게|마음에\s*들었|느낌이\s*괜찮|첫인상|"
+    r"매번\s*반복|바쁜\s*날에는|하기\s*쉬웠|신경이\s*쓰이거든|괜히)"
+)
+
+
+def filler_problems(body: str) -> list[str]:
+    """내용 없이 분량만 채우는 군더더기 문단을 찾는다(문단=빈 줄로 나뉜 덩어리).
+
+    기준: ① 숫자·고유 수치가 없고 ② 막연한 과정·기준·느낌 어휘(_FILLER_RE)가 3개 이상(4줄 이상 문단은 2개)이거나,
+    ③ 그런 어휘가 2개 이상이면서 앞서 쓴 내용과 60% 이상 겹치는 재설명. 표·인용구·소제목·사진 마커 문단은 제외.
+    """
+    problems: list[str] = []
+    paras = [p.strip() for p in re.split(r"\n\s*\n", body or "") if p.strip()]
+    seen: set[str] = set()
+    for p in paras:
+        if _TABLE_RE.search(p) or "[인용]" in p or _MEDIA_RE.fullmatch(p.strip()):
+            seen |= _bigrams(_strip_markers(p))
+            continue
+        plain = _strip_markers(p)
+        lines = [ln for ln in plain.splitlines() if ln.strip()]
+        if len(lines) < 3:  # 소제목·짧은 한두 줄은 대상 아님
+            seen |= _bigrams(plain)
+            continue
+        if _SAFETY_OK_RE.search(plain):  # 실제 안전 안내(상처·알레르기·전문의 등)가 든 문단은 삭제 대상에서 제외
+            seen |= _bigrams(plain)
+            continue
+        hits = len(_FILLER_RE.findall(plain))
+        has_num = bool(re.search(r"\d", plain))
+        bg = _bigrams(plain)
+        overlap = len(bg & seen) / len(bg) if bg else 0
+        if (not has_num and (hits >= 3 or (hits >= 2 and len(lines) >= 4))) or (hits >= 2 and overlap >= 0.6):
+            problems.append(plain.replace("\n", " ")[:34])
+        seen |= bg
+    return problems
+
+
 _TITLE_AI_TELLS = ("솔직 후기", "솔직한", "이야기", "담았어요", "정리해봤", "알아봤", "찾아본", "살펴본", "완벽 정리", "한눈에", "에 대한")
 _TITLE_HYPE = ("필수템", "인생템", "국민템", "무조건", "충격", "비밀", "정체", "대방출", "역대급", "기적")
 _EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]")
@@ -283,6 +321,9 @@ def audit(post: dict, *, length: int = 0) -> dict:
     disclaimers = disclaimer_problems(body)
     if disclaimers:
         issues.append(f"불필요한 해명·면책 {len(disclaimers)}문장(AI 티) — 삭제: " + " / ".join(disclaimers[:6]))
+    fillers = filler_problems(body)
+    if fillers:
+        issues.append(f"군더더기 문단 {len(fillers)}개(내용 없이 분량만 채움) — 통째로 삭제: " + " / ".join(f"'{f}…'" for f in fillers[:5]))
     repeats = repetition_problems(body)
     for prob in repeats:
         issues.append(f"중언부언: {prob}")
@@ -327,6 +368,7 @@ def audit(post: dict, *, length: int = 0) -> dict:
         "bad_tables": bad_tables,
         "repetition": repeats,
         "disclaimers": disclaimers,
+        "fillers": fillers,
         "has_quote": has_quote,
         "quote_count": quote_count,
         "subheading_count": len(subs),
@@ -354,6 +396,7 @@ def densify(
     need_quote: bool = False,
     need_dedupe: bool = False,
     need_disclaimer: bool = False,
+    need_filler: bool = False,
 ) -> str:
     """NAEO 조건 미달 본문을 한 번 보정한다. 실패하면 원문을 그대로 돌려준다."""
     if not issues:
@@ -395,6 +438,14 @@ def densify(
             "'단정할 수는 없어요', '~했다고 받아들이지는 않았으면 해요')을 지적 목록대로 통째로 삭제하라. "
             "대체 문장을 쓰지 말고, 지우면 앞뒤가 어색할 때만 연결을 한 줄로 매끄럽게 하라. 분량이 줄어도 된다. "
             "실제 안전 안내(상처·알레르기·사용 중단·전문의 상담)는 지우지 마라."
+        )
+
+    if need_filler:
+        asks.append(
+            "[군더더기 문단 삭제] 지적 목록의 문단은 '과정·기준·느낌·살펴보다' 같은 막연한 말로 앞에서 한 이야기를 되풀이하거나 "
+            "분량만 채운다. 그 문단을 통째로 삭제하라(다른 말로 바꿔 쓰지 마라). 삭제해도 앞뒤가 이어지게 하고, "
+            "[사진N]·[인용]·[표]·소제목은 건드리지 마라. 분량이 줄어도 된다(메우지 마라). "
+            "단, 삭제 후 공백 제외 글자수가 목표 하한 아래로 내려가면 문단 전체 대신 그 문단의 막연한 문장만 지워라."
         )
 
     instruction = (

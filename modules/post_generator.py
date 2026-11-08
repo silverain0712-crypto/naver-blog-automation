@@ -557,10 +557,11 @@ def generate_post(
                 need_quote=not result["has_quote"],
                 need_dedupe=bool(result.get("repetition")),
                 need_disclaimer=bool(result.get("disclaimers")),
+                need_filler=bool(result.get("fillers")),
             )
             # 보정본이 분량을 깎아먹었으면(요약해버린 경우) 원문을 지킨다.
             # 중언부언 삭제는 분량을 깎는 게 목적이므로 하한을 75%로 낮춘다(요약해버리는 것만 막는다).
-            _keep = 0.75 if (result.get("repetition") or result.get("disclaimers")) else 0.9
+            _keep = 0.75 if (result.get("repetition") or result.get("disclaimers") or result.get("fillers")) else 0.9
             if fixed != post.get("body", "") and _content_len(fixed) >= result["content_len"] * _keep:
                 post["body"] = fixed
             result = naeo_audit.audit(post, length=length)
