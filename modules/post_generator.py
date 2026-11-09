@@ -194,6 +194,11 @@ def generate_post(
     is_sponsored: bool = False,
 ):
     structure = get_structure(structure_key)
+    # 제품·협찬 후기는 재료(실제 써본 경험)가 얇다. 1500자를 하한으로 못 박으면 모델이 설명서식
+    # 문단(용기 구조·사용량·포장 뒷면)으로 채우고, 그게 AI 티의 주범이다(2026-11-09 포무드: 사용자가
+    # 1603자 초안을 995자로 직접 깎았다). 하한을 1000자로 낮추고 재료 없으면 짧게 끝낸다.
+    if structure_key == "product" or is_sponsored:
+        length = min(length, 1000)
     required_links = [l.strip() for l in (required_links or []) if l.strip()]
     keyword = (keyword or "").strip()
     product_link = (product_link or "").strip()
@@ -473,13 +478,14 @@ def generate_post(
     section_list = "\n".join(f"{i+1}. {s}" for i, s in enumerate(structure["sections"]))
     photo_summary = analysis_summary_for_writer(image_analysis)
 
+    len_hint = "(권장 1000~1300자)" if length <= 1000 else "(권장 1500~2000자)"
     user_text = f"""\
 [글 유형] {structure['label']}
 [권장 구조 — 이 순서를 따르되 자연스럽게]
 {section_list}
 
 [핵심 키워드] {keyword or '(미입력 — 직접 제안)'}
-[목표 글 길이 — 반드시 지킬 것] 본문(body)은 **공백 제외 한글 최소 {length}자 이상**(권장 1500~2000자). 절대 미달하지 마라. 분량이 모자라면 (1) 소제목을 더 만들고 (2) 각 섹션의 경험·과정·디테일·감상, 그리고 웹 리서치로 확인한 사실(절차·준비물·수치)을 더 구체적으로 풀어써서 채운다. 단, 같은 말 반복이나 의미 없는 늘리기는 금지하고, 없는 사실을 지어내지도 마라. 체크리스트나 정보 나열도 불릿 없이 짧은 문장을 줄바꿈해서 쓴다.
+[목표 글 길이] 본문(body)은 **공백 제외 한글 {length}자 이상**{len_hint}. 재료(사용자 메모·사진에서 확인된 사실·가이드)가 모자라면 그만큼만 쓰고 끝내라 — 설명서식 문단(용기 구조, 사용량 요령, 포장 뒷면, 일반 관리법)으로 채우는 것보다 짧은 게 낫다. 늘려야 한다면 (1) 사진에서 보이는 구체 묘사 (2) 실제 느낌 (3) 웹 리서치로 확인한 수치만 더한다. 단, 같은 말 반복이나 의미 없는 늘리기는 금지하고, 없는 사실을 지어내지도 마라. 체크리스트나 정보 나열도 불릿 없이 짧은 문장을 줄바꿈해서 쓴다.
 [사진 노출 방식] {photo_style}
 [첨부 영상 수] {video_count}
 
