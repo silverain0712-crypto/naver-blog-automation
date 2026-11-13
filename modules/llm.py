@@ -99,7 +99,10 @@ def _call_json_openai(*, model: str, system: str | list, content: list, schema: 
 
 
 def available() -> bool:
-    """글 작성 LLM 을 쓸 수 있는지(Codex=GPT Pro 구독 로그인 또는 Anthropic 키)."""
+    """글 작성 LLM 을 쓸 수 있는지(Claude/Codex 구독 로그인 또는 Anthropic 키)."""
+    if config.LLM_BACKEND == "claude":
+        from modules import claude_llm
+        return claude_llm.available() or (config.ALLOW_LLM_API_FALLBACK and bool(config.ANTHROPIC_API_KEY))
     if config.LLM_BACKEND == "codex":
         from modules import codex_llm
         return codex_llm.available() or (config.ALLOW_LLM_API_FALLBACK and bool(config.ANTHROPIC_API_KEY))
@@ -109,6 +112,14 @@ def available() -> bool:
 def search_text(*, model: str, system: str, prompt: str, max_tokens: int = 2500,
                 max_uses: int = 5) -> str:
     """웹 검색을 켜고 자유 텍스트 답을 받는다(리서치·벤치마킹). Codex 또는 Anthropic web_search 서버툴."""
+    if config.LLM_BACKEND == "claude":
+        from modules import claude_llm
+        try:
+            return claude_llm.search_text(model=model, system=system, prompt=prompt)
+        except claude_llm.ClaudeLLMError as e:
+            if not (config.ALLOW_LLM_API_FALLBACK and config.ANTHROPIC_API_KEY):
+                raise RuntimeError(f"Claude 구독 검색 실패: {e}") from e
+            print(f"  (Claude CLI 검색 실패 → API 로 대체: {str(e)[:100]})")
     if config.LLM_BACKEND == "codex":
         from modules import codex_llm
         try:
@@ -142,6 +153,14 @@ def call_json(
     if model.startswith("gpt"):
         return _call_json_openai(model=model, system=system, content=content,
                                  schema=schema, max_tokens=max_tokens)
+    if config.LLM_BACKEND == "claude":
+        from modules import claude_llm
+        try:
+            return claude_llm.call_json(model=model, system=system, content=content, schema=schema)
+        except claude_llm.ClaudeLLMError as e:
+            if not (config.ALLOW_LLM_API_FALLBACK and config.ANTHROPIC_API_KEY):
+                raise RuntimeError(f"Claude 구독 호출 실패: {e}") from e
+            print(f"  (Claude CLI 실패 → API 로 대체: {str(e)[:100]})")
     if config.LLM_BACKEND == "codex":
         from modules import codex_llm
         try:
